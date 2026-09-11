@@ -1,5 +1,9 @@
 //! Usage/warm-up client for Claude Code OAuth and Anthropic API-key accounts.
 
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
+
 use anyhow::{Context, Result};
 use chrono::DateTime;
 use reqwest::{
@@ -22,6 +26,71 @@ const SESSION_WINDOW_MINUTES: i64 = 5 * 60;
 const WEEKLY_WINDOW_MINUTES: i64 = 7 * 24 * 60;
 const USER_AGENT_VALUE: &str = "claude-cli/1.0.0";
 
+// Anthropic's oauth/usage endpoint enforces a tight polling budget for
+// third-party clients. This app has three independent callers that can all
+// want fresh usage around the same moment (the main window's 60s poll, the
+// tray's own 60s background poller, and the tray popup fetching on open) —
+// without a shared cache each of those would issue its own HTTP request and
+// blow through the budget in minutes. Keyed by account id, process-wide so
+// every caller in this app instance shares one real fetch per TTL window.
+const USAGE_CACHE_TTL: Duration = Duration::from_secs(4 * 60);
+const USAGE_BACKOFF_DURATION: Duration = Duration::from_secs(30 * 60);
+
+struct CachedUsage {
+    usage: UsageInfo,
+    fetched_at: Instant,
+}
+
+static USAGE_CACHE: LazyLock<Mutex<HashMap<String, CachedUsage>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static USAGE_BACKOFF_UNTIL: LazyLock<Mutex<HashMap<String, Instant>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn cached_usage(account_id: &str) -> Option<UsageInfo> {
+    USAGE_CACHE
+        .lock()
+        .ok()?
+        .get(account_id)
+        .map(|entry| entry.usage.clone())
+}
+
+fn cache_is_fresh(account_id: &str) -> bool {
+    USAGE_CACHE
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(account_id).map(|entry| entry.fetched_at.elapsed() < USAGE_CACHE_TTL))
+        .unwrap_or(false)
+}
+
+fn is_backing_off(account_id: &str) -> bool {
+    USAGE_BACKOFF_UNTIL
+        .lock()
+        .ok()
+        .and_then(|map| map.get(account_id).copied())
+        .is_some_and(|until| Instant::now() < until)
+}
+
+fn store_cache(account_id: &str, usage: UsageInfo) {
+    if let Ok(mut cache) = USAGE_CACHE.lock() {
+        cache.insert(
+            account_id.to_string(),
+            CachedUsage {
+                usage,
+                fetched_at: Instant::now(),
+            },
+        );
+    }
+    if let Ok(mut backoff) = USAGE_BACKOFF_UNTIL.lock() {
+        backoff.remove(account_id);
+    }
+}
+
+fn start_backoff(account_id: &str) {
+    if let Ok(mut backoff) = USAGE_BACKOFF_UNTIL.lock() {
+        backoff.insert(account_id.to_string(), Instant::now() + USAGE_BACKOFF_DURATION);
+    }
+}
+
 /// Get usage information for a Claude account.
 pub async fn get_claude_usage(account: &StoredAccount) -> Result<UsageInfo> {
     match &account.auth_data {
@@ -39,8 +108,41 @@ pub async fn get_claude_usage(account: &StoredAccount) -> Result<UsageInfo> {
             credits_balance: None,
             error: Some("Usage info not available for API key accounts".to_string()),
         }),
-        AuthData::Claude { .. } => get_usage_with_claude_oauth(account).await,
+        AuthData::Claude { .. } => get_usage_with_claude_oauth_cached(account).await,
         _ => anyhow::bail!("Account is not a Claude account"),
+    }
+}
+
+/// Cache/backoff wrapper around `get_usage_with_claude_oauth` shared by every
+/// poller in this process (main window, tray background poller, tray popup).
+async fn get_usage_with_claude_oauth_cached(account: &StoredAccount) -> Result<UsageInfo> {
+    // Serve straight from cache when it's fresh, or when we're intentionally
+    // backing off after a rate limit and have something to show instead of
+    // flashing an "unavailable" error every poll.
+    if cache_is_fresh(&account.id) || is_backing_off(&account.id) {
+        if let Some(usage) = cached_usage(&account.id) {
+            return Ok(usage);
+        }
+    }
+
+    match get_usage_with_claude_oauth(account).await {
+        Ok(usage) if usage.error.is_none() => {
+            store_cache(&account.id, usage.clone());
+            Ok(usage)
+        }
+        Ok(usage) => {
+            // Rate limited or otherwise errored: back off for a while and
+            // keep serving the last known-good reading if we have one.
+            start_backoff(&account.id);
+            Ok(cached_usage(&account.id).unwrap_or(usage))
+        }
+        Err(err) => {
+            start_backoff(&account.id);
+            match cached_usage(&account.id) {
+                Some(usage) => Ok(usage),
+                None => Err(err),
+            }
+        }
     }
 }
 
@@ -332,6 +434,72 @@ async fn send_claude_warmup_request(access_token: &str, include_system_prompt: b
 mod tests {
     use super::*;
     use crate::types::ClaudeUsageWindow;
+
+    fn unique_test_id(label: &str) -> String {
+        format!(
+            "{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )
+    }
+
+    fn sample_usage(account_id: &str) -> UsageInfo {
+        UsageInfo {
+            account_id: account_id.to_string(),
+            plan_type: Some("max".to_string()),
+            primary_used_percent: Some(9.0),
+            primary_window_minutes: Some(SESSION_WINDOW_MINUTES),
+            primary_resets_at: None,
+            secondary_used_percent: Some(22.0),
+            secondary_window_minutes: Some(WEEKLY_WINDOW_MINUTES),
+            secondary_resets_at: None,
+            has_credits: None,
+            unlimited_credits: None,
+            credits_balance: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn cache_is_empty_and_not_fresh_for_an_unknown_account() {
+        let id = unique_test_id("unknown");
+        assert!(!cache_is_fresh(&id));
+        assert!(cached_usage(&id).is_none());
+        assert!(!is_backing_off(&id));
+    }
+
+    #[test]
+    fn storing_usage_makes_the_cache_fresh_and_clears_any_backoff() {
+        let id = unique_test_id("store");
+        start_backoff(&id);
+        assert!(is_backing_off(&id));
+
+        store_cache(&id, sample_usage(&id));
+
+        assert!(cache_is_fresh(&id));
+        assert!(!is_backing_off(&id));
+        assert_eq!(
+            cached_usage(&id).and_then(|u| u.primary_used_percent),
+            Some(9.0)
+        );
+    }
+
+    #[test]
+    fn backing_off_serves_the_last_known_good_reading() {
+        let id = unique_test_id("backoff");
+        store_cache(&id, sample_usage(&id));
+        start_backoff(&id);
+
+        // Still backing off, and the earlier good reading is still there for
+        // callers to fall back on instead of showing "unavailable".
+        assert!(is_backing_off(&id));
+        assert_eq!(
+            cached_usage(&id).and_then(|u| u.secondary_used_percent),
+            Some(22.0)
+        );
+    }
 
     fn account_with_plan(plan: Option<&str>) -> StoredAccount {
         StoredAccount::new_claude(
