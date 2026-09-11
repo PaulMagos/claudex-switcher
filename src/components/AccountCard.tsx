@@ -195,15 +195,17 @@ export function AccountCard({
     }
   };
 
+  const isApiKeyMode = account.auth_mode === "api_key" || account.auth_mode === "claude_key";
   const planDisplay = account.plan_type
     ? account.plan_type.charAt(0).toUpperCase() + account.plan_type.slice(1)
-    : account.auth_mode === "api_key"
+    : isApiKeyMode
       ? "API Key"
       : "Unknown";
 
   const planColors: Record<string, string> = {
     pro: "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-700",
     plus: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700",
+    max: "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-700",
     team: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700",
     enterprise: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700",
     free: "bg-gray-50 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700",
@@ -214,8 +216,14 @@ export function AccountCard({
   const planColorClass = planColors[planKey] || planColors.free;
   const showSubscriptionStatus =
     account.auth_mode === "chat_g_p_t" && account.plan_type?.toLowerCase() !== "free";
+  const providerLabel = account.provider === "claude" ? "Claude" : "Codex";
+  const providerBadgeClass =
+    account.provider === "claude"
+      ? "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800"
+      : "bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
   const subscriptionStatus = getSubscriptionStatus(account.subscription_expires_at);
   const compactResetCredits = !account.is_active;
+  const usageStatsSupported = account.auth_mode === "chat_g_p_t";
 
   const loadResetCredits = useCallback(async () => {
     const requestId = ++resetRequestSeq.current;
@@ -337,6 +345,12 @@ export function AccountCard({
               )}
             </button>
           )}
+          {/* Provider badge */}
+          <span
+            className={`px-2.5 py-1 text-xs font-medium rounded-full border ${providerBadgeClass}`}
+          >
+            {providerLabel}
+          </span>
           {/* Plan badge */}
           <span
             className={`px-2.5 py-1 text-xs font-medium rounded-full border ${planColorClass}`}
@@ -385,7 +399,13 @@ export function AccountCard({
                 ? "bg-orange-100 hover:bg-orange-200 dark:bg-orange-900/30 dark:hover:bg-orange-900/50 text-orange-800 dark:text-orange-300"
                 : "bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:hover:bg-gray-200 text-white dark:text-gray-900"
             }`}
-            title={codexRunning ? "Force close running Codex processes and switch account" : undefined}
+            title={
+              codexRunning
+                ? account.provider === "claude"
+                  ? "Force close running Claude Code processes and switch account"
+                  : "Force close running Codex processes and switch account"
+                : undefined
+            }
           >
             {codexRunning && !switching && (
               <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
@@ -432,27 +452,29 @@ export function AccountCard({
             </span>
           </button>
         )}
-        <button
-          onClick={toggleStatsOpen}
-          className={`px-3 py-2 text-sm rounded-lg transition-colors ${
-            statsOpen
-              ? "bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300"
-              : "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300"
-          }`}
-          title={statsOpen ? "Hide usage statistics" : "Show usage statistics"}
-        >
-          <svg
-            className="h-4 w-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
+        {usageStatsSupported && (
+          <button
+            onClick={toggleStatsOpen}
+            className={`px-3 py-2 text-sm rounded-lg transition-colors ${
+              statsOpen
+                ? "bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300"
+                : "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300"
+            }`}
+            title={statsOpen ? "Hide usage statistics" : "Show usage statistics"}
           >
-            <path d="M4 19V5" strokeLinecap="round" />
-            <path d="M4 19h16" strokeLinecap="round" />
-            <path d="M8 15l3-4 3 2 4-6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+            <svg
+              className="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M4 19V5" strokeLinecap="round" />
+              <path d="M4 19h16" strokeLinecap="round" />
+              <path d="M8 15l3-4 3 2 4-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        )}
         <button
           onClick={onDelete}
           className="px-3 py-2 text-sm rounded-lg bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-300 transition-colors"
@@ -462,14 +484,16 @@ export function AccountCard({
         </button>
       </div>
 
-      <AccountUsageStats
-        accountId={account.id}
-        enabled={account.auth_mode === "chat_g_p_t"}
-        open={statsOpen}
-        usage={account.usage}
-        usageLoading={account.usageLoading}
-        onStatsLoaded={handleStatsLoaded}
-      />
+      {usageStatsSupported && (
+        <AccountUsageStats
+          accountId={account.id}
+          enabled={usageStatsSupported}
+          open={statsOpen}
+          usage={account.usage}
+          usageLoading={account.usageLoading}
+          onStatsLoaded={handleStatsLoaded}
+        />
+      )}
     </div>
   );
 }

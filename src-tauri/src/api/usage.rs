@@ -82,6 +82,9 @@ pub async fn get_account_usage(account: &StoredAccount) -> Result<UsageInfo> {
             error: Some("Usage info not available for API key accounts".to_string()),
         }),
         AuthData::ChatGPT { .. } => get_usage_with_chatgpt_auth(account).await,
+        AuthData::Claude { .. } | AuthData::ClaudeKey { .. } => {
+            crate::api::claude_usage::get_claude_usage(account).await
+        }
     }
 }
 
@@ -90,6 +93,9 @@ pub async fn warmup_account(account: &StoredAccount) -> Result<()> {
     match &account.auth_data {
         AuthData::ApiKey { key } => warmup_with_api_key(key).await,
         AuthData::ChatGPT { .. } => warmup_with_chatgpt_auth(account).await,
+        AuthData::Claude { .. } | AuthData::ClaudeKey { .. } => {
+            crate::api::claude_usage::warmup_claude_account(account).await
+        }
     }
 }
 
@@ -342,7 +348,7 @@ fn extract_chatgpt_auth(account: &StoredAccount) -> Result<(&str, Option<&str>)>
             account_id,
             ..
         } => Ok((access_token.as_str(), account_id.as_deref())),
-        AuthData::ApiKey { .. } => anyhow::bail!("Account is not using ChatGPT OAuth"),
+        _ => anyhow::bail!("Account is not using ChatGPT OAuth"),
     }
 }
 

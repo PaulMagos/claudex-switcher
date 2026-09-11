@@ -370,6 +370,61 @@ export function useAccounts() {
     }
   }, [loadAccounts, refreshUsage]);
 
+  const startClaudeOAuthLogin = useCallback(async (accountName: string) => {
+    const info = await invokeBackend<{ auth_url: string; callback_port: number; manual_code: boolean }>(
+      "start_claude_login",
+      { accountName }
+    );
+    return info;
+  }, []);
+
+  const completeClaudeOAuthLogin = useCallback(
+    async (pastedCode: string) => {
+      const account = await invokeBackend<AccountInfo>("complete_claude_login", { pastedCode });
+      const accountList = await loadAccounts();
+      await refreshUsage(accountList);
+      return account;
+    },
+    [loadAccounts, refreshUsage]
+  );
+
+  const cancelClaudeOAuthLogin = useCallback(async () => {
+    try {
+      await invokeBackend("cancel_claude_login");
+    } catch (err) {
+      console.error("Failed to cancel Claude login:", err);
+    }
+  }, []);
+
+  const importClaudeCredentials = useCallback(
+    async (source: FileSource, name: string) => {
+      if (typeof source === "string") {
+        await invokeBackend<AccountInfo>("add_account_from_claude_credentials_file", {
+          path: source,
+          name,
+        });
+      } else {
+        const contents = await source.text();
+        await invokeBackend<AccountInfo>("add_account_from_claude_credentials_text", {
+          name,
+          contents,
+        });
+      }
+      const accountList = await loadAccounts();
+      await refreshUsage(accountList);
+    },
+    [loadAccounts, refreshUsage]
+  );
+
+  const addClaudeApiKeyAccount = useCallback(
+    async (name: string, apiKey: string) => {
+      await invokeBackend<AccountInfo>("add_claude_api_key_account", { name, apiKey });
+      const accountList = await loadAccounts();
+      await refreshUsage(accountList);
+    },
+    [loadAccounts, refreshUsage]
+  );
+
   const exportAccountsSlimText = useCallback(async () => {
     try {
       return await invokeBackend<string>("export_accounts_slim_text");
@@ -504,6 +559,11 @@ export function useAccounts() {
     startOAuthLogin,
     completeOAuthLogin,
     cancelOAuthLogin,
+    startClaudeOAuthLogin,
+    completeClaudeOAuthLogin,
+    cancelClaudeOAuthLogin,
+    importClaudeCredentials,
+    addClaudeApiKeyAccount,
     loadMaskedAccountIds,
     saveMaskedAccountIds,
   };

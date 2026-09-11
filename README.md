@@ -5,14 +5,15 @@
 <h1 align="center">Codex Switcher</h1>
 
 <p align="center">
-  A Desktop Application for Managing Multiple OpenAI <a href="https://github.com/openai/codex">Codex</a> Accounts<br>
+  A Desktop Application for Managing Multiple OpenAI <a href="https://github.com/openai/codex">Codex</a> and Anthropic <a href="https://github.com/anthropics/claude-code">Claude Code</a> Accounts<br>
   Easily switch between accounts, monitor usage, schedule warm-ups, and stay in control of your quota
 </p>
 
 ## Features
 
-- **Multi-Account Management** – Add, rename, mask, import, export, and manage multiple Codex accounts in one place
-- **Quick Switching** – Switch between accounts from the main window, native tray menu, or tray popup while preserving rotated ChatGPT sessions
+- **Codex and Claude Code** – Manage accounts for both CLIs side by side: OAuth login, `auth.json`/`.credentials.json` import, usage-window display, and warm-ups all work for either provider
+- **Multi-Account Management** – Add, rename, mask, import, export, and manage multiple accounts in one place
+- **Quick Switching** – Switch between accounts from the main window, native tray menu, or tray popup while preserving rotated ChatGPT/Claude sessions
 - **Usage Stats** – View account usage stats for OAuth accounts, including lifetime tokens, daily buckets, streaks, activity insights, and top integrations
 - **Manual Reset Credits** – See available manual reset credits beside each account plan badge, with the closest expiry highlighted as it approaches
 - **Automatic Warm-Up** – Warm up one account or all accounts manually, after each 5-hour reset window, or at specific scheduled times of day
@@ -135,6 +136,16 @@ close the running app before switching accounts.
 If an older Codex Switcher version already saved an invalid refresh token, sign
 in to that account again or remove and re-add it once. An invalidated token
 cannot be recovered locally.
+
+## Claude Code Support
+
+Codex Switcher can also manage [Claude Code](https://github.com/anthropics/claude-code) accounts alongside Codex ones. Add a Claude account from the **Add Account** modal by switching the provider toggle to **Claude Code**:
+
+- **Claude Login** – Claude Code's OAuth flow has no `localhost` redirect: after you approve access in the browser, Claude shows an authorization code (`code#state`) for you to copy and paste back into the app.
+- **Import File** – Import an existing `~/.claude/.credentials.json`.
+- **API Key** – Add an Anthropic API key account (no OAuth usage-window data available for these, same as Codex API key accounts).
+
+Switching to a Claude account writes credentials to wherever Claude Code itself reads them from: `~/.claude/.credentials.json` on Linux/Windows, or the `"Claude Code-credentials"` Keychain item on macOS (respecting `CLAUDE_CONFIG_DIR` if set). Usage windows (5-hour/7-day) come from Anthropic's OAuth usage endpoint and are polled conservatively, since it is rate-limited for third-party clients. A running `claude` CLI process blocks switching the same way a running Codex session does, with its own force-close prompt.
 
 ## macOS Dock and Menu Bar Mode
 

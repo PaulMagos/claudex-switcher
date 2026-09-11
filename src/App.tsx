@@ -6,7 +6,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { finishForceClose, type DesktopReopenPreference } from "./lib/desktopReopen";
 import { useForceCloseCodexProcesses } from "./hooks/useForceCloseCodexProcesses";
 import { AccountCard, AddAccountModal, UpdateChecker } from "./components";
-import type { AccountWithUsage, CodexProcessInfo, DockDisplayMode, UsageInfo } from "./types";
+import type { AccountWithUsage, ClaudeProcessInfo, CodexProcessInfo, DockDisplayMode, Provider, UsageInfo } from "./types";
 import {
   exportFullBackupFile,
   importFullBackupFile,
@@ -182,10 +182,16 @@ function App() {
     startOAuthLogin,
     completeOAuthLogin,
     cancelOAuthLogin,
+    startClaudeOAuthLogin,
+    completeClaudeOAuthLogin,
+    cancelClaudeOAuthLogin,
+    importClaudeCredentials,
+    addClaudeApiKeyAccount,
     loadMaskedAccountIds,
     saveMaskedAccountIds,
   } = useAccounts();
 
+  const [selectedProvider, setSelectedProvider] = useState<Provider>("codex");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [configModalMode, setConfigModalMode] = useState<"slim_export" | "slim_import">(
@@ -198,6 +204,9 @@ function App() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [processInfo, setProcessInfo] = useState<CodexProcessInfo | null>(null);
   const [pendingSwitchAccountId, setPendingSwitchAccountId] = useState<string | null>(null);
+  const [pendingClaudeSwitchAccountId, setPendingClaudeSwitchAccountId] = useState<string | null>(null);
+  const [claudeForceCloseConfirmOpen, setClaudeForceCloseConfirmOpen] = useState(false);
+  const [isForceClosingClaude, setIsForceClosingClaude] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isOpeningCodex, setIsOpeningCodex] = useState(false);
   const [isExportingSlim, setIsExportingSlim] = useState(false);
@@ -451,6 +460,83 @@ function App() {
     return () => clearInterval(interval);
   }, [checkProcesses]);
 
+  const [claudeProcessInfo, setClaudeProcessInfo] = useState<ClaudeProcessInfo | null>(null);
+
+  const checkClaudeProcesses = useCallback(async () => {
+    try {
+      const info = await invokeBackend<ClaudeProcessInfo>("check_claude_processes");
+      setClaudeProcessInfo((prev) =>
+        prev && prev.can_switch === info.can_switch && prev.count === info.count ? prev : info
+      );
+      return info;
+    } catch (err) {
+      console.error("Failed to check Claude processes:", err);
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    checkClaudeProcesses();
+    const interval = setInterval(checkClaudeProcesses, 5000);
+    return () => clearInterval(interval);
+  }, [checkClaudeProcesses]);
+
+  const handleClaudeSwitch = async (accountId: string) => {
+    try {
+      setSwitchingId(accountId);
+      const latestProcessInfo = await checkClaudeProcesses();
+      if (!latestProcessInfo) {
+        showWarmupToast("Could not check running Claude Code processes. Try again.", true);
+        return;
+      }
+      if (!latestProcessInfo.can_switch) {
+        setPendingClaudeSwitchAccountId(accountId);
+        setClaudeForceCloseConfirmOpen(true);
+        return;
+      }
+
+      await switchAccount(accountId);
+    } catch (err) {
+      console.error("Failed to switch Claude account:", err);
+      const latestProcessInfo = await checkClaudeProcesses();
+      if (latestProcessInfo && !latestProcessInfo.can_switch) {
+        setPendingClaudeSwitchAccountId(accountId);
+        setClaudeForceCloseConfirmOpen(true);
+      } else {
+        showWarmupToast(`Switch failed: ${formatWarmupError(err)}`, true);
+      }
+    } finally {
+      setSwitchingId(null);
+    }
+  };
+
+  const handleClaudeForceCloseConfirm = async () => {
+    const accountId = pendingClaudeSwitchAccountId;
+    setIsForceClosingClaude(true);
+    try {
+      await invokeBackend("kill_claude_processes");
+      const latestProcessInfo = await checkClaudeProcesses();
+      if (!latestProcessInfo?.can_switch) {
+        showWarmupToast("Could not force close all Claude Code processes.", true);
+        return;
+      }
+
+      if (accountId) {
+        setSwitchingId(accountId);
+        await switchAccount(accountId);
+        showWarmupToast("Switched account after force closing Claude Code.");
+      }
+    } catch (err) {
+      console.error("Failed to switch account after force closing Claude Code:", err);
+      showWarmupToast(`Switch failed after force close: ${formatWarmupError(err)}`, true);
+    } finally {
+      setPendingClaudeSwitchAccountId(null);
+      setClaudeForceCloseConfirmOpen(false);
+      setIsForceClosingClaude(false);
+      setSwitchingId(null);
+    }
+  };
+
   // Load masked accounts from storage on mount
   useEffect(() => {
     loadMaskedAccountIds().then((ids) => {
@@ -549,6 +635,11 @@ function App() {
   }, []);
 
   const handleSwitch = async (accountId: string) => {
+    const targetAccount = accounts.find((a) => a.id === accountId);
+    if (targetAccount?.provider === "claude") {
+      return handleClaudeSwitch(accountId);
+    }
+
     try {
       setSwitchingId(accountId);
       const latestProcessInfo = await checkProcesses();
@@ -674,12 +765,21 @@ function App() {
         SWITCH_ACCOUNT_BLOCKED_EVENT,
         async (event) => {
           if (forceCloseInFlightRef.current) return;
-          const latestProcessInfo = await checkProcesses();
           const accountId = event.payload?.accountId;
+          const targetAccount = accountsRef.current.find((a) => a.id === accountId);
+          const isClaudeTarget = targetAccount?.provider === "claude";
+          const latestProcessInfo = isClaudeTarget
+            ? await checkClaudeProcesses()
+            : await checkProcesses();
 
           if (accountId && latestProcessInfo && !latestProcessInfo.can_switch) {
-            setPendingSwitchAccountId(accountId);
-            setForceCloseConfirmOpen(true);
+            if (isClaudeTarget) {
+              setPendingClaudeSwitchAccountId(accountId);
+              setClaudeForceCloseConfirmOpen(true);
+            } else {
+              setPendingSwitchAccountId(accountId);
+              setForceCloseConfirmOpen(true);
+            }
             return;
           }
 
@@ -688,6 +788,7 @@ function App() {
               setSwitchingId(accountId);
               await switchAccount(accountId);
               setPendingSwitchAccountId(null);
+              setPendingClaudeSwitchAccountId(null);
               showWarmupToast("Switched account from tray.");
             } catch (err) {
               console.error("Failed to retry tray account switch:", err);
@@ -730,7 +831,14 @@ function App() {
       unlistenAutoWarmup?.();
       unlistenCloseBehavior?.();
     };
-  }, [checkProcesses, formatWarmupError, setForceCloseConfirmOpen, showWarmupToast, switchAccount]);
+  }, [
+    checkClaudeProcesses,
+    checkProcesses,
+    formatWarmupError,
+    setForceCloseConfirmOpen,
+    showWarmupToast,
+    switchAccount,
+  ]);
 
   const handleCloseBehaviorChoice = useCallback(
     async (mode: DockDisplayMode) => {
@@ -1217,9 +1325,14 @@ function App() {
     }
   };
 
-  const activeAccount = accounts.find((a) => a.is_active);
-  const otherAccounts = accounts.filter((a) => !a.is_active);
+  const tabAccounts = useMemo(
+    () => accounts.filter((a) => a.provider === selectedProvider),
+    [accounts, selectedProvider]
+  );
+  const activeAccount = tabAccounts.find((a) => a.is_active);
+  const otherAccounts = tabAccounts.filter((a) => !a.is_active);
   const hasRunningProcesses = processInfo && processInfo.count > 0;
+  const hasRunningClaudeProcesses = claudeProcessInfo && claudeProcessInfo.count > 0;
   const pendingSwitchAccount = useMemo(
     () => accounts.find((account) => account.id === pendingSwitchAccountId),
     [accounts, pendingSwitchAccountId]
@@ -1227,6 +1340,10 @@ function App() {
   const forceCloseConfirmLabel = pendingSwitchAccount
     ? "Force close and switch account"
     : "Force close running Codex processes";
+  const pendingClaudeSwitchAccount = useMemo(
+    () => accounts.find((account) => account.id === pendingClaudeSwitchAccountId),
+    [accounts, pendingClaudeSwitchAccountId]
+  );
 
   const sortedOtherAccounts = useMemo(() => {
     const getResetDeadline = (resetAt: number | null | undefined) =>
@@ -1393,7 +1510,22 @@ function App() {
                   <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100 tracking-tight">
                     Codex Switcher
                   </h1>
-                  {processInfo && (
+                  <div className="inline-flex rounded-lg border border-gray-200 bg-gray-100 p-0.5 dark:border-gray-700 dark:bg-gray-800">
+                    {(["codex", "claude"] as Provider[]).map((provider) => (
+                      <button
+                        key={provider}
+                        onClick={() => setSelectedProvider(provider)}
+                        className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                          selectedProvider === provider
+                            ? "bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 shadow-sm"
+                            : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                        }`}
+                      >
+                        {provider === "codex" ? "Codex" : "Claude Code"}
+                      </button>
+                    ))}
+                  </div>
+                  {selectedProvider === "codex" && processInfo && (
                     <div className="inline-flex items-center gap-1">
                       <span
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs border ${hasRunningProcesses
@@ -1426,7 +1558,7 @@ function App() {
                       )}
                     </div>
                   )}
-                  {isTauriRuntime() && processInfo && !hasRunningProcesses && (
+                  {selectedProvider === "codex" && isTauriRuntime() && processInfo && !hasRunningProcesses && (
                     <button
                       onClick={handleOpenCodexApp}
                       disabled={isOpeningCodex || isCompletingForceClose || switchingId !== null}
@@ -1435,6 +1567,39 @@ function App() {
                     >
                       {isOpeningCodex ? "Opening..." : "Open Codex"}
                     </button>
+                  )}
+                  {selectedProvider === "claude" && claudeProcessInfo && (
+                    <div className="inline-flex items-center gap-1">
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs border ${hasRunningClaudeProcesses
+                            ? "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700"
+                            : "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700"
+                          }`}
+                      >
+                        <span
+                          className={`inline-block w-1.5 h-1.5 rounded-full ${hasRunningClaudeProcesses ? "bg-amber-500" : "bg-green-500"
+                            }`}
+                        ></span>
+                        <span>
+                          {hasRunningClaudeProcesses
+                            ? `${claudeProcessInfo.count} Claude running`
+                            : "0 Claude running"}
+                        </span>
+                      </span>
+                      {hasRunningClaudeProcesses && (
+                        <button
+                          onClick={() => {
+                            setPendingClaudeSwitchAccountId(null);
+                            setClaudeForceCloseConfirmOpen(true);
+                          }}
+                          disabled={isForceClosingClaude}
+                          className="inline-flex items-center rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 disabled:opacity-50 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30"
+                          title="Force close running Claude Code processes"
+                        >
+                          Force close
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -1730,7 +1895,25 @@ function App() {
               No accounts yet
             </h2>
             <p className="text-gray-500 dark:text-gray-400 mb-6">
-              Add your first Codex account to get started
+              Add your first account to get started
+            </p>
+            <button
+              onClick={() => setIsAddModalOpen(true)}
+              className="px-6 py-3 text-sm font-medium rounded-lg bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:hover:bg-gray-200 text-white dark:text-gray-900 transition-colors"
+            >
+              Add Account
+            </button>
+          </div>
+        ) : tabAccounts.length === 0 ? (
+          <div className="text-center py-20">
+            <div className="h-16 w-16 rounded-2xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center mx-auto mb-4">
+              <span className="text-3xl">👤</span>
+            </div>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
+              No {selectedProvider === "claude" ? "Claude Code" : "Codex"} accounts yet
+            </h2>
+            <p className="text-gray-500 dark:text-gray-400 mb-6">
+              Add a {selectedProvider === "claude" ? "Claude Code" : "Codex"} account to get started
             </p>
             <button
               onClick={() => setIsAddModalOpen(true)}
@@ -1818,7 +2001,11 @@ function App() {
                     onRename={(newName) => renameAccount(activeAccount.id, newName)}
                     switching={switchingId === activeAccount.id}
                     switchDisabled={switchingId !== null || isForceClosingCodex}
-                    codexRunning={hasRunningProcesses ?? false}
+                    codexRunning={
+                      selectedProvider === "claude"
+                        ? hasRunningClaudeProcesses ?? false
+                        : hasRunningProcesses ?? false
+                    }
                     warmingUp={
                       isWarmingAll ||
                       warmingUpId === activeAccount.id ||
@@ -1914,8 +2101,14 @@ function App() {
                       }
                       onRename={(newName) => renameAccount(account.id, newName)}
                       switching={switchingId === account.id}
-                      switchDisabled={switchingId !== null || isForceClosingCodex}
-                      codexRunning={hasRunningProcesses ?? false}
+                      switchDisabled={
+                        switchingId !== null || isForceClosingCodex || isForceClosingClaude
+                      }
+                      codexRunning={
+                        account.provider === "claude"
+                          ? hasRunningClaudeProcesses ?? false
+                          : hasRunningProcesses ?? false
+                      }
                       warmingUp={
                         isWarmingAll ||
                         warmingUpId === account.id ||
@@ -2057,6 +2250,56 @@ function App() {
         </div>
       )}
 
+      {claudeForceCloseConfirmOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl w-full max-w-md mx-4 shadow-xl">
+            <div className="p-5 border-b border-gray-100 dark:border-gray-800">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                Force close running Claude Code processes?
+              </h2>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                A running `claude` CLI session currently blocks account switching.
+              </p>
+              {pendingClaudeSwitchAccount && (
+                <p className="text-sm text-gray-600 dark:text-gray-300">
+                  After closing it, Codex Switcher will switch to{" "}
+                  <span className="font-medium text-gray-900 dark:text-gray-100">
+                    {pendingClaudeSwitchAccount.name}
+                  </span>
+                  .
+                </p>
+              )}
+              <p className="text-sm text-red-600 dark:text-red-300">
+                Unsaved Claude Code work may be lost.
+              </p>
+            </div>
+            <div className="flex justify-end gap-3 p-5 border-t border-gray-100 dark:border-gray-800">
+              <button
+                onClick={() => {
+                  setPendingClaudeSwitchAccountId(null);
+                  setClaudeForceCloseConfirmOpen(false);
+                }}
+                disabled={isForceClosingClaude}
+                className="px-4 py-2.5 text-sm font-medium rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  void handleClaudeForceCloseConfirm();
+                }}
+                disabled={isForceClosingClaude}
+                className="px-4 py-2.5 text-sm font-medium rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors disabled:opacity-50"
+              >
+                {isForceClosingClaude ? "Force closing..." : "Force close and switch account"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {closeBehaviorPromptOpen && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl w-full max-w-md mx-4 shadow-xl">
@@ -2112,11 +2355,17 @@ function App() {
       {/* Add Account Modal */}
       <AddAccountModal
         isOpen={isAddModalOpen}
+        defaultProvider={selectedProvider}
         onClose={() => setIsAddModalOpen(false)}
         onImportFile={importFromFile}
         onStartOAuth={startOAuthLogin}
         onCompleteOAuth={completeOAuthLogin}
         onCancelOAuth={cancelOAuthLogin}
+        onStartClaudeOAuth={startClaudeOAuthLogin}
+        onCompleteClaudeOAuth={completeClaudeOAuthLogin}
+        onCancelClaudeOAuth={cancelClaudeOAuthLogin}
+        onImportClaudeCredentials={importClaudeCredentials}
+        onAddClaudeApiKey={addClaudeApiKeyAccount}
       />
 
       {/* Import/Export Config Modal */}

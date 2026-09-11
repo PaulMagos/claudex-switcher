@@ -148,7 +148,12 @@ function TrayMenu() {
   }, []);
 
   const loadActiveStats = useCallback(async (list: AccountInfo[]) => {
-    const active = list.find((account) => account.is_active);
+    // Rich usage stats only exist for ChatGPT accounts; with dual active
+    // accounts (one per provider) this must target that one specifically,
+    // not just "the first active account" in list order.
+    const active = list.find(
+      (account) => account.is_active && account.auth_mode === "chat_g_p_t"
+    );
     if (!active) return;
 
     try {
@@ -333,6 +338,140 @@ function TrayMenu() {
     }
   }, []);
 
+  const hasBothProviders =
+    accounts.some((account) => account.provider === "codex") &&
+    accounts.some((account) => account.provider === "claude");
+
+  const renderAccountRow = (account: AccountInfo) => {
+    const plan = formatPlan(account.plan_type);
+    const usage = usageById[account.id];
+    const stats = statsById[account.id];
+    const windows =
+      usage && !usage.error
+        ? ([
+            {
+              label: "Session",
+              used: usage.primary_used_percent,
+              resetAt: usage.primary_resets_at,
+            },
+            {
+              label: "Weekly",
+              used: usage.secondary_used_percent,
+              resetAt: usage.secondary_resets_at,
+            },
+          ].filter((w) => w.used != null) as {
+            label: string;
+            used: number;
+            resetAt: number | null;
+          }[])
+        : [];
+
+    return (
+      <button
+        key={account.id}
+        onClick={() => void handleSwitch(account)}
+        disabled={switchingId !== null}
+        className={`flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors disabled:opacity-60 ${
+          account.is_active
+            ? "bg-gray-100 dark:bg-gray-800"
+            : "hover:bg-gray-100 dark:hover:bg-gray-800"
+        }`}
+      >
+        <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
+          {account.is_active && (
+            <svg
+              className="h-4 w-4 text-emerald-500"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+            >
+              <path
+                fillRule="evenodd"
+                d="M16.7 5.3a1 1 0 010 1.4l-7.5 7.5a1 1 0 01-1.4 0L3.3 9.7a1 1 0 011.4-1.4l3.3 3.3 6.8-6.8a1 1 0 011.4 0z"
+                clipRule="evenodd"
+              />
+            </svg>
+          )}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">
+              {account.name}
+            </span>
+            {plan && (
+              <span className="shrink-0 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                {plan}
+              </span>
+            )}
+          </span>
+          {windows.length > 0 ? (
+            <span className="mt-1.5 block space-y-1.5">
+              {windows.map((w) => {
+                const remaining = Math.max(0, 100 - w.used);
+                const tone = remainingTone(remaining);
+                const reset = formatResetAt(w.resetAt);
+                return (
+                  <span key={w.label} className="block">
+                    <span className="flex items-center gap-1">
+                      <span className="text-[11px] font-medium text-gray-700 dark:text-gray-200">
+                        {w.label}
+                      </span>
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${tone.dot}`}
+                      />
+                    </span>
+                    <span className="mt-0.5 block h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+                      <span
+                        className={`block h-full rounded-full ${tone.bar}`}
+                        style={{ width: `${Math.min(remaining, 100)}%` }}
+                      />
+                    </span>
+                    <span className="mt-0.5 flex justify-between text-[11px] text-gray-500 dark:text-gray-400">
+                      <span className={tone.text}>
+                        {remaining.toFixed(0)}% left
+                      </span>
+                      {reset && (
+                        <span>
+                          {reset === "now" ? "Resets now" : `Resets in ${reset}`}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                );
+              })}
+            </span>
+          ) : usage?.error ? (
+            <span className="block truncate text-xs text-red-500 dark:text-red-400">
+              Usage unavailable
+            </span>
+          ) : account.email ? (
+            <span className="block truncate text-xs text-gray-500 dark:text-gray-400">
+              {account.email}
+            </span>
+          ) : null}
+          {account.is_active && stats?.available && (
+            <span className="mt-2 grid grid-cols-2 gap-1.5">
+              <span className="rounded-md bg-white px-2 py-1 text-[11px] text-gray-600 shadow-sm dark:bg-gray-950 dark:text-gray-300">
+                <span className="block font-medium text-gray-900 dark:text-gray-100">
+                  {formatTokens(sumDailyTokens(stats, 1))}
+                </span>
+                <span>today</span>
+              </span>
+              <span className="rounded-md bg-white px-2 py-1 text-[11px] text-gray-600 shadow-sm dark:bg-gray-950 dark:text-gray-300">
+                <span className="block font-medium text-gray-900 dark:text-gray-100">
+                  {formatTokens(sumDailyTokens(stats, 7))}
+                </span>
+                <span>last 7 days</span>
+              </span>
+            </span>
+          )}
+        </span>
+        {switchingId === account.id && (
+          <span className="shrink-0 text-xs text-gray-400">...</span>
+        )}
+      </button>
+    );
+  };
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden rounded-xl border border-gray-200 bg-white text-gray-900 shadow-2xl dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100">
       <div className="flex items-center gap-2 border-b border-gray-100 px-3 py-2 dark:border-gray-800">
@@ -378,133 +517,19 @@ function TrayMenu() {
             No accounts configured
           </div>
         ) : (
-          accounts.map((account) => {
-            const plan = formatPlan(account.plan_type);
-            const usage = usageById[account.id];
-            const stats = statsById[account.id];
-            const windows =
-              usage && !usage.error
-                ? ([
-                    {
-                      label: "Session",
-                      used: usage.primary_used_percent,
-                      resetAt: usage.primary_resets_at,
-                    },
-                    {
-                      label: "Weekly",
-                      used: usage.secondary_used_percent,
-                      resetAt: usage.secondary_resets_at,
-                    },
-                  ].filter((w) => w.used != null) as {
-                    label: string;
-                    used: number;
-                    resetAt: number | null;
-                  }[])
-                : [];
+          (["codex", "claude"] as const).map((provider) => {
+            const group = accounts.filter((account) => account.provider === provider);
+            if (group.length === 0) return null;
 
             return (
-              <button
-                key={account.id}
-                onClick={() => void handleSwitch(account)}
-                disabled={switchingId !== null}
-                className={`flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors disabled:opacity-60 ${
-                  account.is_active
-                    ? "bg-gray-100 dark:bg-gray-800"
-                    : "hover:bg-gray-100 dark:hover:bg-gray-800"
-                }`}
-              >
-                <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
-                  {account.is_active && (
-                    <svg
-                      className="h-4 w-4 text-emerald-500"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M16.7 5.3a1 1 0 010 1.4l-7.5 7.5a1 1 0 01-1.4 0L3.3 9.7a1 1 0 011.4-1.4l3.3 3.3 6.8-6.8a1 1 0 011.4 0z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  )}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1.5">
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                      {account.name}
-                    </span>
-                    {plan && (
-                      <span className="shrink-0 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-200">
-                        {plan}
-                      </span>
-                    )}
-                  </span>
-                  {windows.length > 0 ? (
-                    <span className="mt-1.5 block space-y-1.5">
-                      {windows.map((w) => {
-                        const remaining = Math.max(0, 100 - w.used);
-                        const tone = remainingTone(remaining);
-                        const reset = formatResetAt(w.resetAt);
-                        return (
-                          <span key={w.label} className="block">
-                            <span className="flex items-center gap-1">
-                              <span className="text-[11px] font-medium text-gray-700 dark:text-gray-200">
-                                {w.label}
-                              </span>
-                              <span
-                                className={`h-1.5 w-1.5 rounded-full ${tone.dot}`}
-                              />
-                            </span>
-                            <span className="mt-0.5 block h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
-                              <span
-                                className={`block h-full rounded-full ${tone.bar}`}
-                                style={{ width: `${Math.min(remaining, 100)}%` }}
-                              />
-                            </span>
-                            <span className="mt-0.5 flex justify-between text-[11px] text-gray-500 dark:text-gray-400">
-                              <span className={tone.text}>
-                                {remaining.toFixed(0)}% left
-                              </span>
-                              {reset && (
-                                <span>
-                                  {reset === "now" ? "Resets now" : `Resets in ${reset}`}
-                                </span>
-                              )}
-                            </span>
-                          </span>
-                        );
-                      })}
-                    </span>
-                  ) : usage?.error ? (
-                    <span className="block truncate text-xs text-red-500 dark:text-red-400">
-                      Usage unavailable
-                    </span>
-                  ) : account.email ? (
-                    <span className="block truncate text-xs text-gray-500 dark:text-gray-400">
-                      {account.email}
-                    </span>
-                  ) : null}
-                  {account.is_active && stats?.available && (
-                    <span className="mt-2 grid grid-cols-2 gap-1.5">
-                      <span className="rounded-md bg-white px-2 py-1 text-[11px] text-gray-600 shadow-sm dark:bg-gray-950 dark:text-gray-300">
-                        <span className="block font-medium text-gray-900 dark:text-gray-100">
-                          {formatTokens(sumDailyTokens(stats, 1))}
-                        </span>
-                        <span>today</span>
-                      </span>
-                      <span className="rounded-md bg-white px-2 py-1 text-[11px] text-gray-600 shadow-sm dark:bg-gray-950 dark:text-gray-300">
-                        <span className="block font-medium text-gray-900 dark:text-gray-100">
-                          {formatTokens(sumDailyTokens(stats, 7))}
-                        </span>
-                        <span>last 7 days</span>
-                      </span>
-                    </span>
-                  )}
-                </span>
-                {switchingId === account.id && (
-                  <span className="shrink-0 text-xs text-gray-400">...</span>
+              <div key={provider}>
+                {hasBothProviders && (
+                  <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                    {provider === "claude" ? "Claude Code" : "Codex"}
+                  </div>
                 )}
-              </button>
+                {group.map((account) => renderAccountRow(account))}
+              </div>
             );
           })
         )}

@@ -173,6 +173,7 @@ pub async fn start_oauth_login(
     let login_info = OAuthLoginInfo {
         auth_url: auth_url.clone(),
         callback_port: actual_port,
+        manual_code: false,
     };
 
     // Create a channel for the result

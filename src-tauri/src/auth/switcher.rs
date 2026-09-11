@@ -77,6 +77,9 @@ fn create_auth_json(account: &StoredAccount) -> Result<AuthDotJson> {
             }),
             last_refresh: Some(Utc::now()),
         }),
+        AuthData::Claude { .. } | AuthData::ClaudeKey { .. } => {
+            anyhow::bail!("Cannot write a Claude account to Codex's auth.json")
+        }
     }
 }
 

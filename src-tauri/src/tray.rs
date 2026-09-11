@@ -16,8 +16,8 @@ use crate::{
     api::usage::get_account_usage,
     auth::{get_account, get_accounts_file, load_accounts, load_app_settings},
     commands::{
-        is_codex_running_switch_block, restore_main_window, switch_account_by_id,
-        window::TRAY_WINDOW,
+        is_claude_running_switch_block, is_codex_running_switch_block, restore_main_window,
+        switch_account_by_id, window::TRAY_WINDOW,
     },
     types::{AccountsStore, TrayDisplayMode, UsageInfo},
 };
@@ -199,7 +199,9 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, store: &AccountsStore) -> tauri::R
             let label = format!("{}{}", account.name, usage_suffix(&account.id));
             let item =
                 CheckMenuItemBuilder::with_id(account_menu_id(&account.id), menu_label(&label))
-                    .checked(store.active_account_id.as_deref() == Some(&account.id))
+                    .checked(
+                        store.active_id_for(account.auth_mode.provider()) == Some(account.id.as_str()),
+                    )
                     .build(app)?;
             menu.append(&item)?;
         }
@@ -266,7 +268,7 @@ fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
                 if let Err(error) = switch_account_by_id(&account_id).await {
                     eprintln!("Failed to switch account from tray: {error}");
                     refresh_menu(&app);
-                    if is_codex_running_switch_block(&error) {
+                    if is_codex_running_switch_block(&error) || is_claude_running_switch_block(&error) {
                         show_main_window(&app);
                         let _ = app.emit(
                             SWITCH_ACCOUNT_BLOCKED_EVENT,
@@ -303,6 +305,7 @@ fn refresh_menu_on_main_thread<R: Runtime>(app: &AppHandle<R>) {
             let settings = load_app_settings().unwrap_or_default();
             let title = active_tray_title(
                 store.active_account_id.as_deref(),
+                store.active_claude_account_id.as_deref(),
                 settings.tray_display_mode,
             );
             let menu = build_menu(app, &store).map_err(|error| error.to_string())?;
@@ -375,34 +378,51 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     restore_main_window(app);
 }
 
-// The tray title sits after the icon, e.g. "[icon] 66%".
-fn active_session_title(active_account_id: Option<&str>) -> Option<String> {
-    let active_account_id = active_account_id?;
+fn session_title_for_account(account_id: &str) -> Option<String> {
     let cache = TRAY_USAGE.lock().ok()?;
-    let usage = cache.get(active_account_id)?;
+    let usage = cache.get(account_id)?;
     session_remaining_title(
         usage.primary_used_percent.or(usage.secondary_used_percent),
         usage.error.is_some(),
     )
 }
 
-fn active_tray_title(active_account_id: Option<&str>, mode: TrayDisplayMode) -> Option<String> {
+// The tray title sits after the icon, e.g. "[icon] 66%". When both a Codex
+// and a Claude account are active, both remaining percentages are shown.
+fn active_session_title(
+    active_codex_id: Option<&str>,
+    active_claude_id: Option<&str>,
+) -> Option<String> {
+    let codex = active_codex_id.and_then(session_title_for_account);
+    let claude = active_claude_id.and_then(session_title_for_account);
+
+    match (codex, claude) {
+        (Some(codex), Some(claude)) => Some(format!("{codex} {claude}")),
+        (Some(codex), None) => Some(codex),
+        (None, Some(claude)) => Some(claude),
+        (None, None) => None,
+    }
+}
+
+fn active_tray_title(
+    active_codex_id: Option<&str>,
+    active_claude_id: Option<&str>,
+    mode: TrayDisplayMode,
+) -> Option<String> {
     match mode {
-        TrayDisplayMode::IconAndSession => active_session_title(active_account_id),
-        TrayDisplayMode::ActiveUsageText => Some(active_usage_title(active_account_id)),
+        TrayDisplayMode::IconAndSession => active_session_title(active_codex_id, active_claude_id),
+        TrayDisplayMode::ActiveUsageText => {
+            Some(active_usage_title(active_codex_id, active_claude_id))
+        }
         TrayDisplayMode::Hidden => None,
     }
 }
 
-fn active_usage_title(active_account_id: Option<&str>) -> String {
-    let Some(active_account_id) = active_account_id else {
-        return "Codex".to_string();
-    };
-
+fn usage_title_for_account(account_id: &str) -> String {
     let usage = TRAY_USAGE
         .lock()
         .ok()
-        .and_then(|cache| cache.get(active_account_id).cloned());
+        .and_then(|cache| cache.get(account_id).cloned());
 
     match usage {
         Some(usage) if usage.error.is_none() => {
@@ -414,6 +434,21 @@ fn active_usage_title(active_account_id: Option<&str>) -> String {
             )
         }
         _ => "H:-- W:--".to_string(),
+    }
+}
+
+// When both providers have an active account, prefix each side so the
+// combined title stays legible, e.g. "Cx H:73% W:51% · Cl H:91% W:78%".
+fn active_usage_title(active_codex_id: Option<&str>, active_claude_id: Option<&str>) -> String {
+    match (active_codex_id, active_claude_id) {
+        (Some(codex_id), Some(claude_id)) => format!(
+            "Cx {} · Cl {}",
+            usage_title_for_account(codex_id),
+            usage_title_for_account(claude_id)
+        ),
+        (Some(codex_id), None) => usage_title_for_account(codex_id),
+        (None, Some(claude_id)) => usage_title_for_account(claude_id),
+        (None, None) => "Codex".to_string(),
     }
 }
 
@@ -545,16 +580,24 @@ fn modified_at(path: &std::path::Path) -> Option<std::time::SystemTime> {
         .ok()
 }
 
-/// Poll the active account's usage so the tray title stays fresh even when the
-/// main window's webview poller is hidden or suspended by the OS.
+/// Poll both providers' active account usage so the tray title stays fresh
+/// even when the main window's webview poller is hidden or suspended by the OS.
 fn poll_active_account_usage<R: Runtime>(app: AppHandle<R>) {
     std::thread::spawn(move || loop {
-        let account = load_accounts()
-            .ok()
-            .and_then(|store| store.active_account_id)
-            .and_then(|id| get_account(&id).ok().flatten());
+        let active_ids: Vec<String> = load_accounts()
+            .map(|store| {
+                [store.active_account_id, store.active_claude_account_id]
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            })
+            .unwrap_or_default();
 
-        if let Some(account) = account {
+        for active_id in active_ids {
+            let Some(account) = get_account(&active_id).ok().flatten() else {
+                continue;
+            };
+
             match tauri::async_runtime::block_on(get_account_usage(&account)) {
                 // Keep the last known title on transient fetch errors.
                 Ok(usage) => ingest_usage(&app, vec![usage]),
@@ -669,14 +712,22 @@ mod tests {
 
     #[test]
     fn active_usage_title_falls_back_when_usage_is_missing() {
-        assert_eq!(active_usage_title(Some("missing")), "H:-- W:--");
-        assert_eq!(active_usage_title(None), "Codex");
+        assert_eq!(active_usage_title(Some("missing"), None), "H:-- W:--");
+        assert_eq!(active_usage_title(None, None), "Codex");
+    }
+
+    #[test]
+    fn active_usage_title_combines_both_providers_when_both_active() {
+        assert_eq!(
+            active_usage_title(Some("missing-codex"), Some("missing-claude")),
+            "Cx H:-- W:-- · Cl H:-- W:--"
+        );
     }
 
     #[test]
     fn hidden_tray_mode_has_no_title() {
         assert_eq!(
-            active_tray_title(Some("active"), TrayDisplayMode::Hidden),
+            active_tray_title(Some("active"), None, TrayDisplayMode::Hidden),
             None
         );
     }

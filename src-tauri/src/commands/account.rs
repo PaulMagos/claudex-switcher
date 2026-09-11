@@ -1,13 +1,19 @@
 //! Account management Tauri commands
 
 use crate::auth::{
-    add_account, create_chatgpt_account_from_refresh_token, ensure_chatgpt_tokens_fresh_locked,
-    get_active_account, import_from_auth_json, import_from_auth_json_contents, load_accounts,
-    read_current_auth, remove_account, save_accounts, set_active_account, switch_to_account,
+    add_account, create_chatgpt_account_from_refresh_token,
+    create_claude_account_from_refresh_token, ensure_chatgpt_tokens_fresh_locked,
+    ensure_claude_tokens_fresh_locked, get_active_account_for, import_from_auth_json,
+    import_from_auth_json_contents, import_from_claude_credentials_file,
+    import_from_claude_credentials_json, load_accounts, read_current_auth, remove_account,
+    save_accounts, set_active_account, switch_to_account, switch_to_claude_account,
     sync_active_account_tokens, touch_account, AUTH_OPERATION_LOCK,
 };
-use crate::types::{AccountInfo, AccountsStore, AuthData, ImportAccountsSummary, StoredAccount};
+use crate::types::{
+    AccountInfo, AccountsStore, AuthData, ImportAccountsSummary, Provider, StoredAccount,
+};
 
+use super::claude_process::ensure_claude_not_running;
 use super::process::ensure_codex_not_running;
 
 use anyhow::Context;
@@ -35,6 +41,8 @@ const SLIM_EXPORT_PREFIX: &str = "css1.";
 const SLIM_FORMAT_VERSION: u8 = 1;
 const SLIM_AUTH_API_KEY: u8 = 0;
 const SLIM_AUTH_CHATGPT: u8 = 1;
+const SLIM_AUTH_CLAUDE: u8 = 2;
+const SLIM_AUTH_CLAUDE_KEY: u8 = 3;
 
 const FULL_FILE_MAGIC: &[u8; 4] = b"CSWF";
 const FULL_FILE_VERSION: u8 = 1;
@@ -51,8 +59,12 @@ const SLIM_IMPORT_CONCURRENCY: usize = 6;
 struct SlimPayload {
     #[serde(rename = "v")]
     version: u8,
+    /// Name of the active Codex account
     #[serde(rename = "a", skip_serializing_if = "Option::is_none")]
     active_name: Option<String>,
+    /// Name of the active Claude account
+    #[serde(rename = "ac", skip_serializing_if = "Option::is_none", default)]
+    active_claude_name: Option<String>,
     #[serde(rename = "c")]
     accounts: Vec<SlimAccountPayload>,
 }
@@ -73,24 +85,26 @@ struct SlimAccountPayload {
 #[tauri::command]
 pub async fn list_accounts() -> Result<Vec<AccountInfo>, String> {
     let store = load_accounts().map_err(|e| e.to_string())?;
-    let active_id = store.active_account_id.as_deref();
 
     let accounts: Vec<AccountInfo> = store
         .accounts
         .iter()
-        .map(|a| AccountInfo::from_stored(a, active_id))
+        .map(|a| AccountInfo::from_stored(a, store.active_id_for(a.auth_mode.provider())))
         .collect();
 
     Ok(accounts)
 }
 
-/// Get the currently active account
+/// Get the currently active account for a provider (defaults to Codex).
 #[tauri::command]
-pub async fn get_active_account_info() -> Result<Option<AccountInfo>, String> {
+pub async fn get_active_account_info(
+    provider: Option<Provider>,
+) -> Result<Option<AccountInfo>, String> {
+    let provider = provider.unwrap_or(Provider::Codex);
     let store = load_accounts().map_err(|e| e.to_string())?;
-    let active_id = store.active_account_id.as_deref();
+    let active_id = store.active_id_for(provider);
 
-    if let Some(active) = get_active_account().map_err(|e| e.to_string())? {
+    if let Some(active) = get_active_account_for(provider).map_err(|e| e.to_string())? {
         Ok(Some(AccountInfo::from_stored(&active, active_id)))
     } else {
         Ok(None)
@@ -107,7 +121,7 @@ pub async fn add_account_from_file(path: String, name: String) -> Result<Account
     let stored = add_account(account).map_err(|e| e.to_string())?;
 
     let store = load_accounts().map_err(|e| e.to_string())?;
-    let active_id = store.active_account_id.as_deref();
+    let active_id = store.active_id_for(stored.auth_mode.provider());
 
     Ok(AccountInfo::from_stored(&stored, active_id))
 }
@@ -121,7 +135,7 @@ pub async fn add_account_from_auth_json_text(
     let stored = add_account(account).map_err(|e| e.to_string())?;
 
     let store = load_accounts().map_err(|e| e.to_string())?;
-    let active_id = store.active_account_id.as_deref();
+    let active_id = store.active_id_for(stored.auth_mode.provider());
 
     Ok(AccountInfo::from_stored(&stored, active_id))
 }
@@ -142,26 +156,63 @@ pub async fn switch_account_by_id(account_id: &str) -> Result<(), String> {
         .position(|account| account.id == account_id)
         .ok_or_else(|| format!("Account not found: {account_id}"))?;
 
-    if store.active_account_id.as_deref() == Some(account_id) {
+    let provider = store.accounts[target_index].auth_mode.provider();
+
+    if store.active_id_for(provider) == Some(account_id) {
         return Ok(());
     }
 
-    ensure_codex_not_running()?;
+    match provider {
+        Provider::Codex => {
+            ensure_codex_not_running()?;
 
-    // ChatGPT rotates single-use refresh tokens. Preserve the latest token
-    // before replacing auth.json, otherwise switching back restores a stale one.
-    if let Some(auth) = read_current_auth().map_err(|e| e.to_string())? {
-        if sync_active_account_tokens(&mut store, &auth) {
-            save_accounts(&store).map_err(|e| e.to_string())?;
+            // ChatGPT rotates single-use refresh tokens. Preserve the latest
+            // token before replacing auth.json, otherwise switching back
+            // restores a stale one.
+            if let Some(auth) = read_current_auth().map_err(|e| e.to_string())? {
+                if sync_active_account_tokens(&mut store, &auth) {
+                    save_accounts(&store).map_err(|e| e.to_string())?;
+                }
+            }
+
+            let account = ensure_chatgpt_tokens_fresh_locked(&store.accounts[target_index])
+                .await
+                .map_err(|e| e.to_string())?;
+
+            // Write to ~/.codex/auth.json
+            switch_to_account(&account).map_err(|e| e.to_string())?;
+
+            // Restart Antigravity background process if it is running so it
+            // picks up the new authorization file seamlessly.
+            if let Ok(pids) = find_antigravity_processes() {
+                for pid in pids {
+                    #[cfg(unix)]
+                    {
+                        let _ = std::process::Command::new("kill")
+                            .arg("-9")
+                            .arg(pid.to_string())
+                            .output();
+                    }
+                    #[cfg(windows)]
+                    {
+                        let _ = std::process::Command::new("taskkill")
+                            .args(["/F", "/PID", &pid.to_string()])
+                            .output();
+                    }
+                }
+            }
+        }
+        Provider::Claude => {
+            ensure_claude_not_running()?;
+
+            let account = ensure_claude_tokens_fresh_locked(&store.accounts[target_index])
+                .await
+                .map_err(|e| e.to_string())?;
+
+            // Write to ~/.claude/.credentials.json (or the macOS Keychain)
+            switch_to_claude_account(&account).map_err(|e| e.to_string())?;
         }
     }
-
-    let account = ensure_chatgpt_tokens_fresh_locked(&store.accounts[target_index])
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Write to ~/.codex/auth.json
-    switch_to_account(&account).map_err(|e| e.to_string())?;
 
     // Update the active account in our store
     set_active_account(account_id).map_err(|e| e.to_string())?;
@@ -169,27 +220,49 @@ pub async fn switch_account_by_id(account_id: &str) -> Result<(), String> {
     // Update last_used_at
     touch_account(account_id).map_err(|e| e.to_string())?;
 
-    // Restart Antigravity background process if it is running
-    // This allows it to pick up the new authorization file seamlessly
-    if let Ok(pids) = find_antigravity_processes() {
-        for pid in pids {
-            #[cfg(unix)]
-            {
-                let _ = std::process::Command::new("kill")
-                    .arg("-9")
-                    .arg(pid.to_string())
-                    .output();
-            }
-            #[cfg(windows)]
-            {
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/F", "/PID", &pid.to_string()])
-                    .output();
-            }
-        }
-    }
-
     Ok(())
+}
+
+/// Add an account from a Claude Code `.credentials.json` file
+#[tauri::command]
+pub async fn add_account_from_claude_credentials_file(
+    path: String,
+    name: String,
+) -> Result<AccountInfo, String> {
+    let account = import_from_claude_credentials_file(&path, name).map_err(|e| e.to_string())?;
+    let stored = add_account(account).map_err(|e| e.to_string())?;
+
+    let store = load_accounts().map_err(|e| e.to_string())?;
+    let active_id = store.active_id_for(stored.auth_mode.provider());
+    Ok(AccountInfo::from_stored(&stored, active_id))
+}
+
+/// Add an account from uploaded `.credentials.json` contents.
+pub async fn add_account_from_claude_credentials_text(
+    name: String,
+    contents: String,
+) -> Result<AccountInfo, String> {
+    let account =
+        import_from_claude_credentials_json(&contents, name).map_err(|e| e.to_string())?;
+    let stored = add_account(account).map_err(|e| e.to_string())?;
+
+    let store = load_accounts().map_err(|e| e.to_string())?;
+    let active_id = store.active_id_for(stored.auth_mode.provider());
+    Ok(AccountInfo::from_stored(&stored, active_id))
+}
+
+/// Add an account from a raw Anthropic API key
+#[tauri::command]
+pub async fn add_claude_api_key_account(
+    name: String,
+    api_key: String,
+) -> Result<AccountInfo, String> {
+    let account = StoredAccount::new_claude_key(name, api_key);
+    let stored = add_account(account).map_err(|e| e.to_string())?;
+
+    let store = load_accounts().map_err(|e| e.to_string())?;
+    let active_id = store.active_id_for(stored.auth_mode.provider());
+    Ok(AccountInfo::from_stored(&stored, active_id))
 }
 
 /// Remove an account
@@ -354,13 +427,17 @@ fn find_antigravity_processes() -> anyhow::Result<Vec<u32>> {
 }
 
 fn encode_slim_payload_from_store(store: &AccountsStore) -> anyhow::Result<String> {
-    let active_name = store.active_account_id.as_ref().and_then(|active_id| {
-        store
-            .accounts
-            .iter()
-            .find(|account| account.id == *active_id)
-            .map(|account| account.name.clone())
-    });
+    let name_for_active = |active_id: &Option<String>| {
+        active_id.as_ref().and_then(|active_id| {
+            store
+                .accounts
+                .iter()
+                .find(|account| account.id == *active_id)
+                .map(|account| account.name.clone())
+        })
+    };
+    let active_name = name_for_active(&store.active_account_id);
+    let active_claude_name = name_for_active(&store.active_claude_account_id);
 
     let slim_accounts = store
         .accounts
@@ -378,12 +455,25 @@ fn encode_slim_payload_from_store(store: &AccountsStore) -> anyhow::Result<Strin
                 api_key: None,
                 refresh_token: Some(refresh_token.clone()),
             },
+            AuthData::Claude { refresh_token, .. } => SlimAccountPayload {
+                name: account.name.clone(),
+                auth_type: SLIM_AUTH_CLAUDE,
+                api_key: None,
+                refresh_token: Some(refresh_token.clone()),
+            },
+            AuthData::ClaudeKey { key } => SlimAccountPayload {
+                name: account.name.clone(),
+                auth_type: SLIM_AUTH_CLAUDE_KEY,
+                api_key: Some(key.clone()),
+                refresh_token: None,
+            },
         })
         .collect();
 
     let payload = SlimPayload {
         version: SLIM_FORMAT_VERSION,
         active_name,
+        active_claude_name,
         accounts: slim_accounts,
     };
 
@@ -440,7 +530,7 @@ fn validate_slim_payload(payload: &SlimPayload) -> anyhow::Result<()> {
         }
 
         match account.auth_type {
-            SLIM_AUTH_API_KEY => {
+            SLIM_AUTH_API_KEY | SLIM_AUTH_CLAUDE_KEY => {
                 if account
                     .api_key
                     .as_ref()
@@ -449,7 +539,7 @@ fn validate_slim_payload(payload: &SlimPayload) -> anyhow::Result<()> {
                     anyhow::bail!("API key is missing for account {}", account.name);
                 }
             }
-            SLIM_AUTH_CHATGPT => {
+            SLIM_AUTH_CHATGPT | SLIM_AUTH_CLAUDE => {
                 if account
                     .refresh_token
                     .as_ref()
@@ -474,6 +564,12 @@ fn validate_slim_payload(payload: &SlimPayload) -> anyhow::Result<()> {
         }
     }
 
+    if let Some(active_claude_name) = &payload.active_claude_name {
+        if !names.contains(active_claude_name) {
+            anyhow::bail!("Slim import references missing active Claude account: {active_claude_name}");
+        }
+    }
+
     Ok(())
 }
 
@@ -482,6 +578,7 @@ async fn build_store_from_slim_payload(
     existing_names: &HashSet<String>,
 ) -> anyhow::Result<AccountsStore> {
     let active_name = payload.active_name;
+    let active_claude_name = payload.active_claude_name;
     let import_candidates: Vec<SlimAccountPayload> = payload
         .accounts
         .into_iter()
@@ -489,23 +586,30 @@ async fn build_store_from_slim_payload(
         .collect();
 
     let accounts = restore_slim_accounts(import_candidates).await?;
-    let mut active_account_id = None;
 
-    if let Some(active) = active_name {
-        active_account_id = accounts
-            .iter()
-            .find(|account| account.name == active)
-            .map(|account| account.id.clone());
-    }
+    let find_active = |name: Option<String>, provider: Provider| -> Option<String> {
+        name.and_then(|name| {
+            accounts
+                .iter()
+                .find(|account| account.name == name && account.auth_mode.provider() == provider)
+                .map(|account| account.id.clone())
+        })
+        .or_else(|| {
+            accounts
+                .iter()
+                .find(|account| account.auth_mode.provider() == provider)
+                .map(|account| account.id.clone())
+        })
+    };
 
-    if active_account_id.is_none() {
-        active_account_id = accounts.first().map(|a| a.id.clone());
-    }
+    let active_account_id = find_active(active_name, Provider::Codex);
+    let active_claude_account_id = find_active(active_claude_name, Provider::Claude);
 
     Ok(AccountsStore {
         version: 1,
         accounts,
         active_account_id,
+        active_claude_account_id,
         masked_account_ids: Vec::new(),
     })
 }
@@ -537,6 +641,22 @@ async fn restore_slim_accounts(
                         )
                     })?
             }
+            SLIM_AUTH_CLAUDE => {
+                let refresh_token = entry
+                    .refresh_token
+                    .context("Refresh token payload is missing")?;
+                create_claude_account_from_refresh_token(account_name.clone(), refresh_token)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to restore Claude account `{account_name}` from refresh token"
+                        )
+                    })?
+            }
+            SLIM_AUTH_CLAUDE_KEY => StoredAccount::new_claude_key(
+                account_name.clone(),
+                entry.api_key.context("API key payload is missing")?,
+            ),
             _ => anyhow::bail!("Unsupported auth type in slim payload"),
         };
         Ok::<StoredAccount, anyhow::Error>(account)
@@ -696,7 +816,45 @@ fn validate_imported_store(store: &AccountsStore) -> anyhow::Result<()> {
         }
     }
 
+    if let Some(active_claude_id) = &store.active_claude_account_id {
+        if !ids.contains(active_claude_id) {
+            anyhow::bail!("Import references a missing active Claude account: {active_claude_id}");
+        }
+    }
+
     Ok(())
+}
+
+fn reconcile_active_id_for_provider(
+    store: &mut AccountsStore,
+    provider: Provider,
+    imported_active_id: Option<String>,
+) {
+    let current_active_is_valid = store
+        .active_id_for(provider)
+        .is_some_and(|id| store.accounts.iter().any(|a| a.id == id));
+
+    if current_active_is_valid {
+        return;
+    }
+
+    let fallback = || {
+        store
+            .accounts
+            .iter()
+            .find(|a| a.auth_mode.provider() == provider)
+            .map(|a| a.id.clone())
+    };
+
+    let next = imported_active_id
+        .filter(|imported_active| {
+            store.accounts.iter().any(|a| {
+                a.id == *imported_active && a.auth_mode.provider() == provider
+            })
+        })
+        .or_else(fallback);
+
+    store.set_active_id_for(provider, next);
 }
 
 fn merge_accounts_store(
@@ -705,6 +863,7 @@ fn merge_accounts_store(
 ) -> (AccountsStore, ImportAccountsSummary) {
     let imported_version = imported.version;
     let imported_active_id = imported.active_account_id;
+    let imported_active_claude_id = imported.active_claude_account_id;
     let total_in_payload = imported.accounts.len();
     let mut imported_count = 0usize;
     let mut existing_ids: HashSet<String> = current.accounts.iter().map(|a| a.id.clone()).collect();
@@ -723,22 +882,8 @@ fn merge_accounts_store(
 
     current.version = current.version.max(imported_version).max(1);
 
-    let current_active_is_valid = current
-        .active_account_id
-        .as_ref()
-        .is_some_and(|id| current.accounts.iter().any(|a| &a.id == id));
-
-    if !current_active_is_valid {
-        if let Some(imported_active) = imported_active_id {
-            if current.accounts.iter().any(|a| a.id == imported_active) {
-                current.active_account_id = Some(imported_active);
-            } else {
-                current.active_account_id = current.accounts.first().map(|a| a.id.clone());
-            }
-        } else {
-            current.active_account_id = current.accounts.first().map(|a| a.id.clone());
-        }
-    }
+    reconcile_active_id_for_provider(&mut current, Provider::Codex, imported_active_id);
+    reconcile_active_id_for_provider(&mut current, Provider::Claude, imported_active_claude_id);
 
     (
         current,

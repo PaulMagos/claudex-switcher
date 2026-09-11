@@ -10,13 +10,15 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use tokio::runtime::Runtime;
 
 use crate::commands::{
-    add_account_from_auth_json_text, add_account_from_file, cancel_login, check_codex_processes,
-    complete_login, delete_account, export_accounts_full_encrypted_bytes,
+    add_account_from_auth_json_text, add_account_from_claude_credentials_file,
+    add_account_from_claude_credentials_text, add_account_from_file, add_claude_api_key_account,
+    cancel_claude_login, cancel_login, check_claude_processes, check_codex_processes,
+    complete_claude_login, complete_login, delete_account, export_accounts_full_encrypted_bytes,
     export_accounts_slim_text, fetch_usage, get_account_usage_stats, get_active_account_info,
     get_masked_account_ids, import_accounts_full_encrypted_bytes, import_accounts_slim_text,
-    kill_codex_processes, list_accounts, refresh_account_metadata, refresh_all_accounts_usage,
-    rename_account, set_masked_account_ids, start_login, switch_account, warmup_account,
-    warmup_all_accounts,
+    kill_claude_processes, kill_codex_processes, list_accounts, refresh_account_metadata,
+    refresh_all_accounts_usage, rename_account, set_masked_account_ids, start_claude_login,
+    start_login, switch_account, warmup_account, warmup_all_accounts,
 };
 
 #[derive(Debug, Deserialize)]
@@ -69,6 +71,21 @@ struct UploadEncryptedArgs {
 struct FileImportArgs {
     path: String,
     name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeApiKeyArgs {
+    name: String,
+    #[serde(alias = "api_key")]
+    api_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeCompleteLoginArgs {
+    #[serde(alias = "pasted_code")]
+    pasted_code: String,
 }
 
 pub fn run_lan_server(host: &str, port: u16) -> anyhow::Result<()> {
@@ -129,7 +146,7 @@ fn handle_request(mut request: Request, runtime: &Runtime, dist_dir: &Path) -> a
 async fn invoke_web_command(command: &str, payload: Value) -> Result<Value, String> {
     match command {
         "list_accounts" => to_json(list_accounts().await?),
-        "get_active_account_info" => to_json(get_active_account_info().await?),
+        "get_active_account_info" => to_json(get_active_account_info(None).await?),
         "add_account_from_file" => {
             let args: FileImportArgs = parse_args(payload)?;
             to_json(add_account_from_file(args.path, args.name).await?)
@@ -197,6 +214,29 @@ async fn invoke_web_command(command: &str, payload: Value) -> Result<Value, Stri
         }
         "check_codex_processes" => to_json(check_codex_processes().await?),
         "kill_codex_processes" => to_json(kill_codex_processes(None).await?),
+        "add_account_from_claude_credentials_file" => {
+            let args: FileImportArgs = parse_args(payload)?;
+            to_json(add_account_from_claude_credentials_file(args.path, args.name).await?)
+        }
+        "add_account_from_claude_credentials_text" => {
+            let args: UploadAuthJsonArgs = parse_args(payload)?;
+            to_json(add_account_from_claude_credentials_text(args.name, args.contents).await?)
+        }
+        "add_claude_api_key_account" => {
+            let args: ClaudeApiKeyArgs = parse_args(payload)?;
+            to_json(add_claude_api_key_account(args.name, args.api_key).await?)
+        }
+        "start_claude_login" => {
+            let args: LoginArgs = parse_args(payload)?;
+            to_json(start_claude_login(args.account_name).await?)
+        }
+        "complete_claude_login" => {
+            let args: ClaudeCompleteLoginArgs = parse_args(payload)?;
+            to_json(complete_claude_login(args.pasted_code).await?)
+        }
+        "cancel_claude_login" => to_json(cancel_claude_login().await?),
+        "check_claude_processes" => to_json(check_claude_processes().await?),
+        "kill_claude_processes" => to_json(kill_claude_processes().await?),
         _ => Err(format!("Unsupported web command: {command}")),
     }
 }

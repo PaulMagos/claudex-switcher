@@ -1,11 +1,13 @@
 //! Usage query Tauri commands
 
+use crate::api::claude_usage::fetch_claude_account_metadata;
 use crate::api::usage::{
     fetch_chatgpt_account_metadata, get_account_usage, refresh_all_usage,
     warmup_account as send_warmup,
 };
 use crate::auth::{
-    ensure_chatgpt_tokens_fresh, get_account, load_accounts, update_account_metadata,
+    ensure_chatgpt_tokens_fresh, ensure_claude_tokens_fresh, get_account, load_accounts,
+    update_account_metadata,
 };
 use crate::types::{AccountInfo, AuthData, UsageInfo, WarmupSummary};
 use futures::{stream, StreamExt};
@@ -43,7 +45,7 @@ pub async fn refresh_account_metadata(account_id: String) -> Result<AccountInfo,
         .ok_or_else(|| format!("Account not found: {account_id}"))?;
 
     let updated = match &account.auth_data {
-        AuthData::ApiKey { .. } => account,
+        AuthData::ApiKey { .. } | AuthData::ClaudeKey { .. } => account,
         AuthData::ChatGPT { .. } => {
             let refreshed = ensure_chatgpt_tokens_fresh(&account)
                 .await
@@ -61,10 +63,27 @@ pub async fn refresh_account_metadata(account_id: String) -> Result<AccountInfo,
             )
             .map_err(|e| e.to_string())?
         }
+        AuthData::Claude { .. } => {
+            let refreshed = ensure_claude_tokens_fresh(&account)
+                .await
+                .map_err(|e| e.to_string())?;
+            let live_metadata = fetch_claude_account_metadata(&refreshed)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            update_account_metadata(
+                &account_id,
+                None,
+                live_metadata.email,
+                live_metadata.plan_type,
+                None,
+            )
+            .map_err(|e| e.to_string())?
+        }
     };
 
     let store = load_accounts().map_err(|e| e.to_string())?;
-    let active_id = store.active_account_id.as_deref();
+    let active_id = store.active_id_for(updated.auth_mode.provider());
     Ok(AccountInfo::from_stored(&updated, active_id))
 }
 

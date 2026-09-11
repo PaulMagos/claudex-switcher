@@ -11,14 +11,17 @@ pub mod types;
 pub mod web;
 
 use commands::{
-    ack_close_behavior_prompt, add_account_from_file, cancel_login, check_codex_processes,
-    complete_close_behavior, complete_login, delete_account, export_accounts_full_encrypted_file,
+    ack_close_behavior_prompt, add_account_from_file, add_claude_api_key_account,
+    add_account_from_claude_credentials_file, cancel_claude_login, cancel_login,
+    check_claude_processes, check_codex_processes, complete_claude_login, complete_close_behavior,
+    complete_login, delete_account, export_accounts_full_encrypted_file,
     export_accounts_slim_text, get_account_usage_stats, get_active_account_info,
     get_dock_display_mode, get_masked_account_ids, get_usage, hide_tray_window,
-    import_accounts_full_encrypted_file, import_accounts_slim_text, kill_codex_processes,
-    list_accounts, open_main_window, quit_app, refresh_account_metadata,
+    import_accounts_full_encrypted_file, import_accounts_slim_text, kill_claude_processes,
+    kill_codex_processes, list_accounts, open_main_window, quit_app, refresh_account_metadata,
     refresh_all_accounts_usage, rename_account, report_usage, set_dock_display_mode,
-    set_masked_account_ids, start_login, switch_account, warmup_account, warmup_all_accounts,
+    set_masked_account_ids, start_claude_login, start_login, switch_account, warmup_account,
+    warmup_all_accounts,
 };
 use tauri::Emitter;
 
@@ -69,6 +72,8 @@ pub fn run() {
             list_accounts,
             get_active_account_info,
             add_account_from_file,
+            add_account_from_claude_credentials_file,
+            add_claude_api_key_account,
             switch_account,
             delete_account,
             rename_account,
@@ -83,6 +88,9 @@ pub fn run() {
             start_login,
             complete_login,
             cancel_login,
+            start_claude_login,
+            complete_claude_login,
+            cancel_claude_login,
             // Usage
             get_usage,
             get_account_usage_stats,
@@ -93,6 +101,8 @@ pub fn run() {
             // Process detection
             check_codex_processes,
             kill_codex_processes,
+            check_claude_processes,
+            kill_claude_processes,
             // Tray window
             hide_tray_window,
             open_main_window,

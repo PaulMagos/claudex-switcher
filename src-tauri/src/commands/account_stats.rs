@@ -445,7 +445,7 @@ fn extract_chatgpt_auth(account: &StoredAccount) -> anyhow::Result<(&str, Option
             account_id,
             ..
         } => Ok((access_token.as_str(), account_id.as_deref())),
-        AuthData::ApiKey { .. } => anyhow::bail!("Account is not using ChatGPT OAuth"),
+        _ => anyhow::bail!("Account is not using ChatGPT OAuth"),
     }
 }
 

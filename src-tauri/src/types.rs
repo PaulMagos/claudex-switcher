@@ -12,11 +12,32 @@ pub struct AccountsStore {
     pub version: u32,
     /// List of all stored accounts
     pub accounts: Vec<StoredAccount>,
-    /// Currently active account ID
+    /// Currently active Codex account ID
     pub active_account_id: Option<String>,
+    /// Currently active Claude Code account ID (independent of the Codex one)
+    #[serde(default)]
+    pub active_claude_account_id: Option<String>,
     /// Set of account IDs that are masked (hidden)
     #[serde(default)]
     pub masked_account_ids: Vec<String>,
+}
+
+impl AccountsStore {
+    /// The active account ID for a given provider, if any.
+    pub fn active_id_for(&self, provider: Provider) -> Option<&str> {
+        match provider {
+            Provider::Codex => self.active_account_id.as_deref(),
+            Provider::Claude => self.active_claude_account_id.as_deref(),
+        }
+    }
+
+    /// Set the active account ID for a given provider.
+    pub fn set_active_id_for(&mut self, provider: Provider, id: Option<String>) {
+        match provider {
+            Provider::Codex => self.active_account_id = id,
+            Provider::Claude => self.active_claude_account_id = id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +86,7 @@ impl Default for AccountsStore {
             version: 1,
             accounts: Vec::new(),
             active_account_id: None,
+            active_claude_account_id: None,
             masked_account_ids: Vec::new(),
         }
     }
@@ -165,6 +187,51 @@ impl StoredAccount {
             last_used_at: None,
         }
     }
+
+    /// Create a new account with Claude Code OAuth authentication
+    pub fn new_claude(
+        name: String,
+        email: Option<String>,
+        subscription_type: Option<String>,
+        access_token: String,
+        refresh_token: String,
+        expires_at: i64,
+        scopes: Vec<String>,
+    ) -> Self {
+        let name = Self::resolved_name(name, email.as_ref(), None, "Claude");
+        Self {
+            id: Uuid::new_v4().to_string(),
+            name,
+            email,
+            plan_type: subscription_type.clone(),
+            subscription_expires_at: None,
+            auth_mode: AuthMode::Claude,
+            auth_data: AuthData::Claude {
+                access_token,
+                refresh_token,
+                expires_at,
+                scopes,
+                subscription_type,
+            },
+            created_at: Utc::now(),
+            last_used_at: None,
+        }
+    }
+
+    /// Create a new account with an Anthropic API key
+    pub fn new_claude_key(name: String, api_key: String) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            name: Self::resolved_name(name, None, None, "Claude API key"),
+            email: None,
+            plan_type: None,
+            subscription_expires_at: None,
+            auth_mode: AuthMode::ClaudeKey,
+            auth_data: AuthData::ClaudeKey { key: api_key },
+            created_at: Utc::now(),
+            last_used_at: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -240,6 +307,27 @@ pub enum AuthMode {
     ApiKey,
     /// Using ChatGPT OAuth tokens
     ChatGPT,
+    /// Using Claude Code OAuth tokens
+    Claude,
+    /// Using an Anthropic API key
+    ClaudeKey,
+}
+
+/// Which CLI/provider an account belongs to
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Provider {
+    Codex,
+    Claude,
+}
+
+impl AuthMode {
+    pub fn provider(self) -> Provider {
+        match self {
+            AuthMode::ApiKey | AuthMode::ChatGPT => Provider::Codex,
+            AuthMode::Claude | AuthMode::ClaudeKey => Provider::Claude,
+        }
+    }
 }
 
 /// Authentication data (credentials)
@@ -261,6 +349,25 @@ pub enum AuthData {
         refresh_token: String,
         /// ChatGPT account ID
         account_id: Option<String>,
+    },
+    /// Claude Code OAuth authentication
+    Claude {
+        /// Access token for API calls
+        access_token: String,
+        /// Refresh token for token renewal
+        refresh_token: String,
+        /// Access token expiry, unix milliseconds
+        expires_at: i64,
+        /// OAuth scopes granted
+        #[serde(default)]
+        scopes: Vec<String>,
+        /// Subscription tier reported by Claude Code (e.g. "pro", "max")
+        subscription_type: Option<String>,
+    },
+    /// Anthropic API key authentication
+    ClaudeKey {
+        /// The API key
+        key: String,
     },
 }
 
@@ -341,6 +448,32 @@ pub struct TokenData {
 }
 
 // ============================================================================
+// Types for Claude Code's ~/.claude/.credentials.json format (for compatibility)
+// ============================================================================
+
+/// The official Claude Code credentials file format
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeCredentialsFile {
+    #[serde(rename = "claudeAiOauth")]
+    pub claude_ai_oauth: ClaudeOAuthTokens,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeOAuthTokens {
+    #[serde(rename = "accessToken")]
+    pub access_token: String,
+    #[serde(rename = "refreshToken")]
+    pub refresh_token: String,
+    /// Unix milliseconds
+    #[serde(rename = "expiresAt")]
+    pub expires_at: i64,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(rename = "subscriptionType", skip_serializing_if = "Option::is_none")]
+    pub subscription_type: Option<String>,
+}
+
+// ============================================================================
 // Types for frontend communication
 // ============================================================================
 
@@ -353,6 +486,7 @@ pub struct AccountInfo {
     pub plan_type: Option<String>,
     pub subscription_expires_at: Option<DateTime<Utc>>,
     pub auth_mode: AuthMode,
+    pub provider: Provider,
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
@@ -364,7 +498,7 @@ impl AccountInfo {
             AuthData::ChatGPT { id_token, .. } => {
                 parse_chatgpt_id_token_claims(id_token).subscription_expires_at
             }
-            AuthData::ApiKey { .. } => None,
+            AuthData::ApiKey { .. } | AuthData::Claude { .. } | AuthData::ClaudeKey { .. } => None,
         };
 
         Self {
@@ -377,6 +511,7 @@ impl AccountInfo {
                 .clone()
                 .or(fallback_subscription_expires_at),
             auth_mode: account.auth_mode,
+            provider: account.auth_mode.provider(),
             is_active: active_id == Some(&account.id),
             created_at: account.created_at,
             last_used_at: account.last_used_at,
@@ -459,8 +594,12 @@ pub struct ImportAccountsSummary {
 pub struct OAuthLoginInfo {
     /// The authorization URL to open in browser
     pub auth_url: String,
-    /// The local callback port
+    /// The local callback port (0 when the flow has no local callback server)
     pub callback_port: u16,
+    /// True when the provider requires the user to paste back an
+    /// authorization code instead of completing via a local redirect.
+    #[serde(default)]
+    pub manual_code: bool,
 }
 
 // ============================================================================
@@ -496,6 +635,65 @@ pub struct CreditStatusDetails {
     pub unlimited: bool,
     #[serde(default)]
     pub balance: Option<String>,
+}
+
+// ============================================================================
+// API response types (from Anthropic's Claude Code OAuth backend)
+// ============================================================================
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClaudeUsagePayload {
+    #[serde(default)]
+    pub five_hour: Option<ClaudeUsageWindow>,
+    #[serde(default)]
+    pub seven_day: Option<ClaudeUsageWindow>,
+    #[serde(default)]
+    pub extra_usage: Option<ClaudeExtraUsage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClaudeUsageWindow {
+    /// Percentage used, 0.0-100.0 (already scaled, not a 0-1 fraction)
+    #[serde(default)]
+    pub utilization: Option<f64>,
+    #[serde(default)]
+    pub resets_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClaudeExtraUsage {
+    #[serde(default)]
+    pub is_enabled: bool,
+    #[serde(default)]
+    pub used_credits: Option<f64>,
+    #[serde(default)]
+    pub monthly_limit: Option<f64>,
+    #[serde(default)]
+    pub currency: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClaudeProfilePayload {
+    #[serde(default)]
+    pub account: Option<ClaudeProfileAccount>,
+    #[serde(default)]
+    pub organization: Option<ClaudeProfileOrganization>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClaudeProfileAccount {
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub has_claude_max: bool,
+    #[serde(default)]
+    pub has_claude_pro: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClaudeProfileOrganization {
+    #[serde(default)]
+    pub organization_type: Option<String>,
 }
 
 #[cfg(test)]
