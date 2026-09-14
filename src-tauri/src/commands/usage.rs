@@ -7,9 +7,9 @@ use crate::api::usage::{
 };
 use crate::auth::{
     ensure_chatgpt_tokens_fresh, ensure_claude_tokens_fresh, get_account, load_accounts,
-    update_account_metadata,
+    switch_to_claude_account, update_account_claude_tokens, update_account_metadata,
 };
-use crate::types::{AccountInfo, AuthData, UsageInfo, WarmupSummary};
+use crate::types::{AccountInfo, AuthData, Provider, UsageInfo, WarmupSummary};
 use futures::{stream, StreamExt};
 
 /// Fetch usage info for a specific account (shared by the Tauri command and web mode).
@@ -71,14 +71,44 @@ pub async fn refresh_account_metadata(account_id: String) -> Result<AccountInfo,
                 .await
                 .map_err(|e| e.to_string())?;
 
-            update_account_metadata(
+            // Persist into AuthData.subscription_type too (not just the UI's
+            // plan_type badge) so a stale/missing subscriptionType heals
+            // itself here instead of only at initial login.
+            let (access_token, refresh_token, expires_at, scopes) = match &refreshed.auth_data {
+                AuthData::Claude {
+                    access_token,
+                    refresh_token,
+                    expires_at,
+                    scopes,
+                    ..
+                } => (
+                    access_token.clone(),
+                    refresh_token.clone(),
+                    *expires_at,
+                    scopes.clone(),
+                ),
+                _ => unreachable!("matched AuthData::Claude above"),
+            };
+
+            let updated = update_account_claude_tokens(
                 &account_id,
-                None,
+                access_token,
+                refresh_token,
+                expires_at,
+                Some(scopes),
+                live_metadata.plan_type.clone(),
                 live_metadata.email,
-                live_metadata.plan_type,
-                None,
             )
-            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+
+            let is_active =
+                load_accounts().map_err(|e| e.to_string())?.active_id_for(Provider::Claude)
+                    == Some(account_id.as_str());
+            if is_active {
+                let _ = switch_to_claude_account(&updated);
+            }
+
+            updated
         }
     };
 

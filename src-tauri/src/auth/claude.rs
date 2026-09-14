@@ -7,7 +7,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 
-use crate::types::{AuthData, ClaudeCredentialsFile, ClaudeOAuthTokens, StoredAccount};
+use crate::types::{AuthData, ClaudeCredentialsFile, ClaudeOAuthTokens, ClaudeProfilePayload, StoredAccount};
 
 const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 
@@ -70,12 +70,71 @@ pub fn switch_to_claude_account(account: &StoredAccount) -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        write_macos_keychain(&content)
+        write_macos_keychain(&content)?;
+        // The Keychain item alone is not reliably picked up by the real
+        // `claude` binary (its internal recognition of an externally
+        // written Keychain item is unexplained after extensive testing).
+        // CLAUDE_CODE_OAUTH_TOKEN is a first-class, documented env-var auth
+        // source claude checks before ever touching the Keychain, so mirror
+        // the access token there via the per-user launchd environment -
+        // never written to a file, only held in memory for this login
+        // session, and picked up by any `claude` process started after
+        // this call.
+        if let AuthData::Claude {
+            access_token,
+            subscription_type,
+            ..
+        } = &account.auth_data
+        {
+            set_claude_oauth_env(Some(access_token), subscription_type.as_deref());
+        }
+        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         write_credentials_file(&content)
+    }
+}
+
+/// Mirror (or clear) the active Claude account's access token into the
+/// per-user launchd environment as `CLAUDE_CODE_OAUTH_TOKEN`, so new
+/// `claude` processes pick it up without any file ever holding the raw
+/// token in plaintext. Best-effort: failures are logged, never fatal.
+#[cfg(target_os = "macos")]
+pub fn set_claude_oauth_env(access_token: Option<&str>, subscription_type: Option<&str>) {
+    match access_token {
+        Some(token) => {
+            if let Err(err) = Command::new("launchctl")
+                .args(["setenv", "CLAUDE_CODE_OAUTH_TOKEN", token])
+                .status()
+            {
+                println!("[Auth] Failed to set CLAUDE_CODE_OAUTH_TOKEN: {err}");
+            }
+            match subscription_type {
+                Some(sub) => {
+                    if let Err(err) = Command::new("launchctl")
+                        .args(["setenv", "CLAUDE_CODE_SUBSCRIPTION_TYPE", sub])
+                        .status()
+                    {
+                        println!("[Auth] Failed to set CLAUDE_CODE_SUBSCRIPTION_TYPE: {err}");
+                    }
+                }
+                None => {
+                    let _ = Command::new("launchctl")
+                        .args(["unsetenv", "CLAUDE_CODE_SUBSCRIPTION_TYPE"])
+                        .status();
+                }
+            }
+        }
+        None => {
+            let _ = Command::new("launchctl")
+                .args(["unsetenv", "CLAUDE_CODE_OAUTH_TOKEN"])
+                .status();
+            let _ = Command::new("launchctl")
+                .args(["unsetenv", "CLAUDE_CODE_SUBSCRIPTION_TYPE"])
+                .status();
+        }
     }
 }
 
@@ -99,6 +158,12 @@ fn write_macos_keychain(content: &str) -> Result<()> {
             KEYCHAIN_SERVICE,
             "-w",
             content,
+            // Without an ACL, `security` defaults to trusting only itself
+            // (/usr/bin/security). The real Claude Code binary is a
+            // different process and its native Keychain read would be
+            // silently denied, making it report "not logged in" even
+            // though the item exists and parses fine.
+            "-A",
         ])
         .status()
         .context("Failed to run security(1) to write Claude Code Keychain item")?;
@@ -221,6 +286,96 @@ pub fn import_from_claude_credentials_json(
         credentials,
         account_name.trim().to_string(),
     ))
+}
+
+/// Path to the account-identity cache Claude Code keeps at `~/.claude.json`
+/// (or `$CLAUDE_CONFIG_DIR/.claude.json` when that env var is set) - distinct
+/// from the config directory used for `.credentials.json`.
+pub fn get_claude_account_json_path() -> Result<PathBuf> {
+    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+        if !dir.trim().is_empty() {
+            return Ok(PathBuf::from(dir).join(".claude.json"));
+        }
+    }
+
+    let home = dirs::home_dir().context("Could not find home directory")?;
+    Ok(home.join(".claude.json"))
+}
+
+/// Mirror the account-identity cache Claude Code itself keeps in
+/// `~/.claude.json`'s `oauthAccount` key. The raw OAuth token in the
+/// Keychain/credentials file is not the whole picture: Claude Code also
+/// reads this cache for the active account's email/org/plan, and it is
+/// normally only populated by a real `claude login`. Left untouched, it
+/// keeps pointing at whichever account last did a real login, out of sync
+/// with whatever account we just switched the Keychain token to.
+pub fn sync_oauth_account_cache(profile: &ClaudeProfilePayload) -> Result<()> {
+    let path = get_claude_account_json_path()?;
+
+    let mut root: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read {}", path.display()))?;
+        serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    let root_obj = root
+        .as_object_mut()
+        .context("~/.claude.json is not a JSON object")?;
+
+    let mut oauth_account = root_obj
+        .get("oauthAccount")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut set = |key: &str, value: serde_json::Value| {
+        if !value.is_null() {
+            oauth_account.insert(key.to_string(), value);
+        }
+    };
+
+    if let Some(account) = &profile.account {
+        set("accountUuid", account.uuid.clone().into());
+        set("emailAddress", account.email.clone().into());
+        set("displayName", account.display_name.clone().into());
+        set("fullName", account.full_name.clone().into());
+        set("accountCreatedAt", account.created_at.clone().into());
+    }
+    if let Some(org) = &profile.organization {
+        set("organizationUuid", org.uuid.clone().into());
+        set("organizationName", org.name.clone().into());
+        set("organizationType", org.organization_type.clone().into());
+        set("billingType", org.billing_type.clone().into());
+        set("seatTier", org.seat_tier.clone().into());
+        set("organizationRateLimitTier", org.rate_limit_tier.clone().into());
+        set("userRateLimitTier", org.rate_limit_tier.clone().into());
+        set(
+            "subscriptionCreatedAt",
+            org.subscription_created_at.clone().into(),
+        );
+        if let Some(has_extra) = org.has_extra_usage_enabled {
+            oauth_account.insert("hasExtraUsageEnabled".to_string(), has_extra.into());
+        }
+    }
+
+    oauth_account.insert(
+        "profileFetchedAt".to_string(),
+        chrono::Utc::now().timestamp_millis().into(),
+    );
+    oauth_account
+        .entry("ccOnboardingFlags")
+        .or_insert_with(|| serde_json::json!({}));
+
+    root_obj.insert(
+        "oauthAccount".to_string(),
+        serde_json::Value::Object(oauth_account),
+    );
+
+    let content =
+        serde_json::to_string_pretty(&root).context("Failed to serialize ~/.claude.json")?;
+    std::fs::write(&path, content).with_context(|| format!("Failed to write {}", path.display()))
 }
 
 /// Import a Claude account from a `.credentials.json` file path.

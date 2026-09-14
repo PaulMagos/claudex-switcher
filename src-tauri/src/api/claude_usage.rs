@@ -279,7 +279,7 @@ fn derive_claude_plan_type(payload: &ClaudeProfilePayload) -> Option<String> {
     }
 }
 
-pub async fn fetch_claude_account_metadata(account: &StoredAccount) -> Result<ClaudeAccountMetadata> {
+pub async fn fetch_claude_profile_payload(account: &StoredAccount) -> Result<ClaudeProfilePayload> {
     let access_token = extract_claude_access_token(account)?;
     let client = reqwest::Client::new();
     let response = client
@@ -295,11 +295,14 @@ pub async fn fetch_claude_account_metadata(account: &StoredAccount) -> Result<Cl
         anyhow::bail!("Claude profile request failed: {status} - {body}");
     }
 
-    let payload: ClaudeProfilePayload = response
+    response
         .json()
         .await
-        .context("Failed to parse Claude profile response")?;
+        .context("Failed to parse Claude profile response")
+}
 
+pub async fn fetch_claude_account_metadata(account: &StoredAccount) -> Result<ClaudeAccountMetadata> {
+    let payload = fetch_claude_profile_payload(account).await?;
     let plan_type = derive_claude_plan_type(&payload);
     Ok(ClaudeAccountMetadata {
         email: payload.account.and_then(|a| a.email),

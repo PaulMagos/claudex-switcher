@@ -6,6 +6,7 @@ use chrono::Utc;
 use super::claude::switch_to_claude_account;
 use super::claude_oauth::refresh_claude_tokens_via_api;
 use super::{load_accounts, update_account_claude_tokens, AUTH_OPERATION_LOCK};
+use crate::api::claude_usage::fetch_claude_account_metadata;
 use crate::types::{AuthData, Provider, StoredAccount};
 
 const EXPIRY_SKEW_MS: i64 = 60_000;
@@ -129,7 +130,7 @@ pub async fn create_claude_account_from_refresh_token(
         .map(|scope| scope.split(' ').map(str::to_string).collect())
         .unwrap_or_default();
 
-    Ok(StoredAccount::new_claude(
+    let mut account = StoredAccount::new_claude(
         account_name,
         None,
         None,
@@ -137,7 +138,22 @@ pub async fn create_claude_account_from_refresh_token(
         next_refresh_token,
         expires_at,
         scopes,
-    ))
+    );
+
+    if let Ok(metadata) = fetch_claude_account_metadata(&account).await {
+        if metadata.email.is_some() {
+            account.email = metadata.email;
+        }
+        account.plan_type = metadata.plan_type.clone();
+        if let AuthData::Claude {
+            subscription_type, ..
+        } = &mut account.auth_data
+        {
+            *subscription_type = metadata.plan_type;
+        }
+    }
+
+    Ok(account)
 }
 
 #[cfg(test)]

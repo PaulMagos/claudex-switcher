@@ -683,7 +683,15 @@ pub struct ClaudeProfilePayload {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClaudeProfileAccount {
     #[serde(default)]
+    pub uuid: Option<String>,
+    #[serde(default)]
     pub email: Option<String>,
+    #[serde(default)]
+    pub full_name: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
     #[serde(default)]
     pub has_claude_max: bool,
     #[serde(default)]
@@ -693,7 +701,21 @@ pub struct ClaudeProfileAccount {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClaudeProfileOrganization {
     #[serde(default)]
+    pub uuid: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
     pub organization_type: Option<String>,
+    #[serde(default)]
+    pub billing_type: Option<String>,
+    #[serde(default)]
+    pub seat_tier: Option<String>,
+    #[serde(default)]
+    pub rate_limit_tier: Option<String>,
+    #[serde(default)]
+    pub has_extra_usage_enabled: Option<bool>,
+    #[serde(default)]
+    pub subscription_created_at: Option<String>,
 }
 
 #[cfg(test)]

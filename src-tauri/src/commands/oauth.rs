@@ -4,13 +4,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
+use crate::api::claude_usage::{fetch_claude_account_metadata, fetch_claude_profile_payload};
 use crate::auth::claude_oauth::{exchange_claude_code_for_tokens, start_claude_oauth_login, ClaudePendingLogin};
 use crate::auth::oauth_server::{start_oauth_login, wait_for_oauth_login, OAuthLoginResult};
 use crate::auth::{
     add_account, load_accounts, set_active_account, switch_to_account, switch_to_claude_account,
-    touch_account, AUTH_OPERATION_LOCK,
+    sync_oauth_account_cache, touch_account, AUTH_OPERATION_LOCK,
 };
-use crate::types::{AccountInfo, OAuthLoginInfo, StoredAccount};
+use crate::types::{AccountInfo, AuthData, OAuthLoginInfo, StoredAccount};
 
 struct PendingOAuth {
     rx: oneshot::Receiver<anyhow::Result<OAuthLoginResult>>,
@@ -116,7 +117,7 @@ pub async fn complete_claude_login(pasted_code: String) -> Result<AccountInfo, S
         .map(|scope| scope.split(' ').map(str::to_string).collect())
         .unwrap_or_default();
 
-    let account = StoredAccount::new_claude(
+    let mut account = StoredAccount::new_claude(
         pending.account_name,
         None,
         None,
@@ -126,11 +127,33 @@ pub async fn complete_claude_login(pasted_code: String) -> Result<AccountInfo, S
         scopes,
     );
 
+    // Claude Code shows "API Usage Billing" instead of the subscription plan
+    // when `subscriptionType` is missing from the written credentials, so
+    // fetch it from the profile API before the account is ever written out.
+    if let Ok(metadata) = fetch_claude_account_metadata(&account).await {
+        if metadata.email.is_some() {
+            account.email = metadata.email;
+        }
+        account.plan_type = metadata.plan_type.clone();
+        if let AuthData::Claude {
+            subscription_type, ..
+        } = &mut account.auth_data
+        {
+            *subscription_type = metadata.plan_type;
+        }
+    }
+
     let _auth_guard = AUTH_OPERATION_LOCK.lock().await;
     let stored = add_account(account).map_err(|e| e.to_string())?;
     set_active_account(&stored.id).map_err(|e| e.to_string())?;
     switch_to_claude_account(&stored).map_err(|e| e.to_string())?;
     touch_account(&stored.id).map_err(|e| e.to_string())?;
+
+    // Also refresh Claude Code's own ~/.claude.json account-identity cache
+    // so it matches this account rather than whichever one logged in last.
+    if let Ok(payload) = fetch_claude_profile_payload(&stored).await {
+        let _ = sync_oauth_account_cache(&payload);
+    }
 
     let store = load_accounts().map_err(|e| e.to_string())?;
     let active_id = store.active_id_for(stored.auth_mode.provider());

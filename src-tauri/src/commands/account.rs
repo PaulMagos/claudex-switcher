@@ -1,5 +1,6 @@
 //! Account management Tauri commands
 
+use crate::api::claude_usage::fetch_claude_profile_payload;
 use crate::auth::{
     add_account, create_chatgpt_account_from_refresh_token,
     create_claude_account_from_refresh_token, ensure_chatgpt_tokens_fresh_locked,
@@ -7,7 +8,7 @@ use crate::auth::{
     import_from_auth_json_contents, import_from_claude_credentials_file,
     import_from_claude_credentials_json, load_accounts, read_current_auth, remove_account,
     save_accounts, set_active_account, switch_to_account, switch_to_claude_account,
-    sync_active_account_tokens, touch_account, AUTH_OPERATION_LOCK,
+    sync_active_account_tokens, sync_oauth_account_cache, touch_account, AUTH_OPERATION_LOCK,
 };
 use crate::types::{
     AccountInfo, AccountsStore, AuthData, ImportAccountsSummary, Provider, StoredAccount,
@@ -211,6 +212,14 @@ pub async fn switch_account_by_id(account_id: &str) -> Result<(), String> {
 
             // Write to ~/.claude/.credentials.json (or the macOS Keychain)
             switch_to_claude_account(&account).map_err(|e| e.to_string())?;
+
+            // Claude Code also keeps a separate account-identity cache in
+            // ~/.claude.json (oauthAccount), normally only populated by a
+            // real `claude login`. Refresh it so it matches the account we
+            // just switched to instead of whichever one logged in last.
+            if let Ok(payload) = fetch_claude_profile_payload(&account).await {
+                let _ = sync_oauth_account_cache(&payload);
+            }
         }
     }
 
