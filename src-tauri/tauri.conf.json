@@ -38,7 +38,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI0MUQ4MjE5MjMxNkMxRjgKUldUNHdSWWpHWUlkdFBvWENvQ0d4aG1BdVVueUlTWXAxQmprMFBCOEsxT2NmakhQY0FxbjNsb3cK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRBRjkyQzRFRDY0RjQ2MTQKUldRVVJrL1dUaXo1U3ZIellkZmtPY3FLMzZmUGNSWm9wWFVhOEQvOEFGNThDRFF2dko0NWdrWkwK",
       "endpoints": [
         "https://github.com/PaulMagos/codex-switcher/releases/latest/download/latest.json"
       ]
