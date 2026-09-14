@@ -9,6 +9,12 @@
   Easily switch between accounts, monitor usage, schedule warm-ups, and stay in control of your quota
 </p>
 
+<div align="center">
+
+[![](https://dcbadge.limes.pink/api/server/4QzyJTC3S)](https://discord.gg/4QzyJTC3S)
+
+</div>
+
 ## Features
 
 - **Codex and Claude Code** – Manage accounts for both CLIs side by side: OAuth login, `auth.json`/`.credentials.json` import, usage-window display, and warm-ups all work for either provider

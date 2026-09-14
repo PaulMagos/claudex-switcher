@@ -281,7 +281,6 @@ export function AccountCard({
           <div className="flex items-center gap-2 mb-1">
             {account.is_active && (
               <span className="flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-green-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
               </span>
             )}
@@ -396,14 +395,14 @@ export function AccountCard({
             disabled={switching || switchDisabled}
             className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
               codexRunning
-                ? "bg-orange-100 hover:bg-orange-200 dark:bg-orange-900/30 dark:hover:bg-orange-900/50 text-orange-800 dark:text-orange-300"
+                ? "bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 text-blue-800 dark:text-blue-300"
                 : "bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:hover:bg-gray-200 text-white dark:text-gray-900"
             }`}
             title={
               codexRunning
                 ? account.provider === "claude"
                   ? "Force close running Claude Code processes and switch account"
-                  : "Force close running Codex processes and switch account"
+                  : "Close running Codex processes and switch account"
                 : undefined
             }
           >
