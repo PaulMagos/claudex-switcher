@@ -175,7 +175,7 @@ fn find_claude_processes() -> anyhow::Result<Vec<u32>> {
                 };
 
                 let lowercase_command = command.to_ascii_lowercase();
-                if lowercase_command.contains("codex-switcher") {
+                if lowercase_command.contains("claudex-switcher") {
                     continue;
                 }
 

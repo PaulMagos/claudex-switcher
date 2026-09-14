@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="src-tauri/icons/logo.svg" alt="Codex Switcher" width="128" height="128">
+  <img src="src-tauri/icons/logo.svg" alt="Claudex Switcher" width="128" height="128">
 </p>
 
-<h1 align="center">Codex Switcher</h1>
+<h1 align="center">Claudex Switcher</h1>
 
 <p align="center">
   A Desktop Application for Managing Multiple OpenAI <a href="https://github.com/openai/codex">Codex</a> and Anthropic <a href="https://github.com/anthropics/claude-code">Claude Code</a> Accounts<br>
@@ -19,7 +19,7 @@
 - **Automatic Warm-Up** – Warm up one account or all accounts manually, after each 5-hour reset window, or at specific scheduled times of day
 - **System Tray Controls** – Use the tray popup to switch accounts, inspect quota and active-account stats, refresh usage, open the main window, or quit the app
 - **Tray Display Modes** – Choose between the app icon with session percentage, a text-only hourly/weekly percentage display, or a hidden tray icon
-- **macOS Dock Control** – Keep Codex Switcher in the Dock or run it as a menu bar only app, with a first-close prompt and a tray fallback
+- **macOS Dock Control** – Keep Claudex Switcher in the Dock or run it as a menu bar only app, with a first-close prompt and a tray fallback
 - **Rate-Limit Monitoring** – View real-time 5-hour session and weekly usage, reset timing, credits, and subscription expiry
 - **Blocked Switch Recovery** – Detect running Codex sessions and offer a force-close flow before retrying the account switch
 - **Dual Login Mode** – Authenticate with ChatGPT OAuth or import existing `auth.json` files
@@ -28,30 +28,30 @@
 
 ### Download a Release
 
-The easiest way to install Codex Switcher is from the latest GitHub release:
+The easiest way to install Claudex Switcher is from the latest GitHub release:
 
-[Download the latest release](https://github.com/Lampese/codex-switcher/releases/latest)
+[Download the latest release](https://github.com/PaulMagos/claudex-switcher/releases/latest)
 
 Choose the file for your platform:
 
-- **macOS Apple Silicon:** `Codex.Switcher_*_aarch64.dmg`
-- **macOS Intel:** `Codex.Switcher_*_x64.dmg`
-- **Windows:** `Codex.Switcher_*_x64-setup.exe` or `Codex.Switcher_*_x64_en-US.msi`
-- **Linux Debian/Ubuntu:** `Codex.Switcher_*_amd64.deb`
-- **Linux AppImage:** `Codex.Switcher_*_amd64.AppImage`
-- **Linux RPM:** `Codex.Switcher-*-1.x86_64.rpm`
+- **macOS Apple Silicon:** `Claudex.Switcher_*_aarch64.dmg`
+- **macOS Intel:** `Claudex.Switcher_*_x64.dmg`
+- **Windows:** `Claudex.Switcher_*_x64-setup.exe` or `Claudex.Switcher_*_x64_en-US.msi`
+- **Linux Debian/Ubuntu:** `Claudex.Switcher_*_amd64.deb`
+- **Linux AppImage:** `Claudex.Switcher_*_amd64.AppImage`
+- **Linux RPM:** `Claudex.Switcher-*-1.x86_64.rpm`
 
 > **macOS:** current release builds are not Apple-notarized. If macOS says the
 > app is damaged, move it to `/Applications` and remove the quarantine flag:
 >
 > ```bash
-> sudo xattr -dr com.apple.quarantine "/Applications/Codex Switcher.app"
-> open "/Applications/Codex Switcher.app"
+> sudo xattr -dr com.apple.quarantine "/Applications/Claudex Switcher.app"
+> open "/Applications/Claudex Switcher.app"
 > ```
 
 ### Auto Updates
 
-Codex Switcher checks the latest GitHub release on startup. When a newer signed
+Claudex Switcher checks the latest GitHub release on startup. When a newer signed
 update package is available, the app shows an update prompt and can install it
 from inside the app.
 
@@ -65,8 +65,8 @@ from inside the app.
 
 ```bash
 # Clone the repository
-git clone https://github.com/Lampese/codex-switcher.git
-cd codex-switcher
+git clone https://github.com/PaulMagos/claudex-switcher.git
+cd claudex-switcher
 
 # Install dependencies
 pnpm install
@@ -95,14 +95,14 @@ pnpm lan
 
 Optional environment variables:
 
-- `CODEX_SWITCHER_WEB_HOST` to override the bind host
-- `CODEX_SWITCHER_WEB_PORT` to override the port
+- `CLAUDEX_SWITCHER_WEB_HOST` to override the bind host
+- `CLAUDEX_SWITCHER_WEB_PORT` to override the port
 
 The browser dashboard serves the same UI and backend actions through `/api/invoke/*`, which makes it usable over LAN, Tailscale, or a remote host tunnel when you expose the chosen port safely.
 
 ## Usage and Reset Credits
 
-Codex Switcher shows two kinds of account usage information:
+Claudex Switcher shows two kinds of account usage information:
 
 - **Rate limits** – the account card shows the current 5-hour and weekly limit
   windows, remaining percentage, reset timing, credit balance, and subscription
@@ -123,23 +123,23 @@ the last 7 days, while keeping the normal rate-limit refresh flow separate.
 ## Safe Account Switching
 
 ChatGPT can replace an OAuth refresh token after using it. Once replaced, the
-older token may no longer be accepted. Before Codex Switcher writes another
+older token may no longer be accepted. Before Claudex Switcher writes another
 account to `~/.codex/auth.json`, it now saves the latest tokens from the account
 that is currently active. Switching back therefore restores the current session
 instead of an older snapshot.
 
 Token refreshes and account switches are serialized so a background refresh
-cannot finish late and overwrite the account you just selected. Codex Switcher
+cannot finish late and overwrite the account you just selected. Claudex Switcher
 also avoids refreshing the active account while Codex or ChatGPT is running;
 close the running app before switching accounts.
 
-If an older Codex Switcher version already saved an invalid refresh token, sign
+If an older Claudex Switcher version already saved an invalid refresh token, sign
 in to that account again or remove and re-add it once. An invalidated token
 cannot be recovered locally.
 
 ## Claude Code Support
 
-Codex Switcher can also manage [Claude Code](https://github.com/anthropics/claude-code) accounts alongside Codex ones. Add a Claude account from the **Add Account** modal by switching the provider toggle to **Claude Code**:
+Claudex Switcher can also manage [Claude Code](https://github.com/anthropics/claude-code) accounts alongside Codex ones. Add a Claude account from the **Add Account** modal by switching the provider toggle to **Claude Code**:
 
 - **Claude Login** – Claude Code's OAuth flow has no `localhost` redirect: after you approve access in the browser, Claude shows an authorization code (`code#state`) for you to copy and paste back into the app.
 - **Import File** – Import an existing `~/.claude/.credentials.json`.
@@ -149,7 +149,7 @@ Switching to a Claude account writes credentials to wherever Claude Code itself 
 
 ## macOS Dock and Menu Bar Mode
 
-On macOS, Codex Switcher can either stay visible in the Dock or live only in the
+On macOS, Claudex Switcher can either stay visible in the Dock or live only in the
 menu bar. The first time you close the main window, the app asks which behavior
 you want and lets you choose whether to show that prompt again.
 
@@ -182,7 +182,7 @@ On macOS you can keep the machine awake with the built-in `caffeinate` command,
 which stops automatically when the app quits:
 
 ```bash
-caffeinate -i -w "$(pgrep -x 'Codex Switcher')"
+caffeinate -i -w "$(pgrep -x 'Claudex Switcher')"
 ```
 
 ## Disclaimer

@@ -316,7 +316,7 @@ fn force_kill_processes_with_admin_privileges(pids: &[u32]) -> bool {
         .collect::<Vec<_>>()
         .join(" ");
     let script = format!(
-        r#"do shell script "for pid in {pid_args}; do /bin/kill -9 \"$pid\" 2>/dev/null || true; done" with administrator privileges with prompt "Codex Switcher needs permission to force close sudo/root Codex processes.""#
+        r#"do shell script "for pid in {pid_args}; do /bin/kill -9 \"$pid\" 2>/dev/null || true; done" with administrator privileges with prompt "Claudex Switcher needs permission to force close sudo/root Codex processes.""#
     );
 
     Command::new("/usr/bin/osascript")
@@ -415,7 +415,7 @@ fn find_codex_processes() -> anyhow::Result<(Vec<u32>, usize)> {
                 };
 
                 let lowercase_command = command.to_ascii_lowercase();
-                let is_switcher = lowercase_command.contains("codex-switcher");
+                let is_switcher = lowercase_command.contains("claudex-switcher");
 
                 if is_switcher {
                     continue;
@@ -686,7 +686,7 @@ fn is_windows_codex_root_process(process: &WindowsCodexProcess) -> bool {
     let name = process.name.to_ascii_lowercase();
     let command = normalize_windows_path(&process.command_line);
 
-    if command.contains("codex-switcher") || command.contains("--type=") {
+    if command.contains("claudex-switcher") || command.contains("--type=") {
         return false;
     }
 
@@ -1043,8 +1043,8 @@ mod tests {
     fn windows_codex_shortcut_filter_excludes_switcher() {
         assert!(super::is_windows_codex_shortcut_name("Codex.lnk"));
         assert!(super::is_windows_codex_shortcut_name("OpenAI Codex.lnk"));
-        assert!(!super::is_windows_codex_shortcut_name("Codex Switcher.lnk"));
-        assert!(!super::is_windows_codex_shortcut_name("codex-switcher.lnk"));
+        assert!(!super::is_windows_codex_shortcut_name("Claudex Switcher.lnk"));
+        assert!(!super::is_windows_codex_shortcut_name("claudex-switcher.lnk"));
         assert!(!super::is_windows_codex_shortcut_name("Codex.txt"));
     }
 }
@@ -1215,7 +1215,7 @@ $app = Get-StartApps |
     $name = [string]$_.Name
     $appId = [string]$_.AppID
     $text = ($name + ' ' + $appId).ToLowerInvariant()
-    $isSwitcher = $text.Contains('codex switcher') -or $text.Contains('codex-switcher') -or $text.Contains('lampese')
+    $isSwitcher = $text.Contains('claudex switcher') -or $text.Contains('claudex-switcher') -or $text.Contains('lampese')
     $isCodex = $name -eq 'Codex' -or $name -eq 'OpenAI Codex' -or $appId -like 'OpenAI.Codex*' -or ($text.Contains('openai') -and $text.Contains('codex'))
     $isCodex -and -not $isSwitcher
   } |
@@ -1393,8 +1393,8 @@ fn is_windows_codex_shortcut_name(file_name: &str) -> bool {
         .unwrap_or(file_name)
         .to_ascii_lowercase();
 
-    if shortcut_name.contains("codex switcher")
-        || shortcut_name.contains("codex-switcher")
+    if shortcut_name.contains("claudex switcher")
+        || shortcut_name.contains("claudex-switcher")
         || shortcut_name.contains("switcher")
     {
         return false;

@@ -360,7 +360,7 @@ async fn handle_oauth_request(
     <div class="container">
         <div class="checkmark">✓</div>
         <h1>Login Successful!</h1>
-        <p>You can close this window and return to Codex Switcher.</p>
+        <p>You can close this window and return to Claudex Switcher.</p>
     </div>
 </body>
 </html>"#;

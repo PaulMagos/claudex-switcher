@@ -1508,7 +1508,7 @@ function App() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100 tracking-tight">
-                    Codex Switcher
+                    Claudex Switcher
                   </h1>
                   <div className="inline-flex rounded-lg border border-gray-200 bg-gray-100 p-0.5 dark:border-gray-700 dark:bg-gray-800">
                     {(["codex", "claude"] as Provider[]).map((provider) => (
@@ -2186,7 +2186,7 @@ function App() {
               </p>
               {pendingSwitchAccount && (
                 <p className="text-sm text-gray-600 dark:text-gray-300">
-                  After closing Codex, Codex Switcher will switch to{" "}
+                  After closing Codex, Claudex Switcher will switch to{" "}
                   <span className="font-medium text-gray-900 dark:text-gray-100">
                     {pendingSwitchAccount.name}
                   </span>
@@ -2264,7 +2264,7 @@ function App() {
               </p>
               {pendingClaudeSwitchAccount && (
                 <p className="text-sm text-gray-600 dark:text-gray-300">
-                  After closing it, Codex Switcher will switch to{" "}
+                  After closing it, Claudex Switcher will switch to{" "}
                   <span className="font-medium text-gray-900 dark:text-gray-100">
                     {pendingClaudeSwitchAccount.name}
                   </span>
@@ -2305,12 +2305,12 @@ function App() {
           <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl w-full max-w-md mx-4 shadow-xl">
             <div className="p-5 border-b border-gray-100 dark:border-gray-800">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                Keep Codex Switcher in the Dock?
+                Keep Claudex Switcher in the Dock?
               </h2>
             </div>
             <div className="p-5 space-y-4">
               <p className="text-sm text-gray-600 dark:text-gray-300">
-                When the window is closed, Codex Switcher can stay in the Dock or live only in the menu bar.
+                When the window is closed, Claudex Switcher can stay in the Dock or live only in the menu bar.
               </p>
               <p className="text-sm text-gray-600 dark:text-gray-300">
                 You can always change this later from the tray popup.

@@ -1,13 +1,13 @@
 [package]
-name = "codex-switcher"
+name = "claudex-switcher"
 version = "0.2.18"
-description = "A multi-account manager for Codex CLI"
-authors = ["lampese"]
+description = "A multi-account manager for Codex CLI and Claude Code"
+authors = ["lampese", "PaulMagos"]
 edition = "2021"
-default-run = "codex-switcher"
+default-run = "claudex-switcher"
 
 [lib]
-name = "codex_switcher_lib"
+name = "claudex_switcher_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

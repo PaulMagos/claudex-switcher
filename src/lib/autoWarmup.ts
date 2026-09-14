@@ -1,11 +1,11 @@
-export const AUTO_WARMUP_ALL_STORAGE_KEY = "codex-switcher-auto-warmup-all";
-export const AUTO_WARMUP_ACCOUNTS_STORAGE_KEY = "codex-switcher-auto-warmup-accounts";
-export const AUTO_WARMUP_LEDGER_STORAGE_KEY = "codex-switcher-auto-warmup-last-success";
+export const AUTO_WARMUP_ALL_STORAGE_KEY = "claudex-switcher-auto-warmup-all";
+export const AUTO_WARMUP_ACCOUNTS_STORAGE_KEY = "claudex-switcher-auto-warmup-accounts";
+export const AUTO_WARMUP_LEDGER_STORAGE_KEY = "claudex-switcher-auto-warmup-last-success";
 export const AUTO_WARMUP_ALL_CHANGED_EVENT = "auto-warmup-all-changed";
 
-export const TIMED_WARMUP_ENABLED_STORAGE_KEY = "codex-switcher-timed-warmup-enabled";
-export const TIMED_WARMUP_TIMES_STORAGE_KEY = "codex-switcher-timed-warmup-times";
-export const TIMED_WARMUP_LEDGER_STORAGE_KEY = "codex-switcher-timed-warmup-last-fire";
+export const TIMED_WARMUP_ENABLED_STORAGE_KEY = "claudex-switcher-timed-warmup-enabled";
+export const TIMED_WARMUP_TIMES_STORAGE_KEY = "claudex-switcher-timed-warmup-times";
+export const TIMED_WARMUP_LEDGER_STORAGE_KEY = "claudex-switcher-timed-warmup-last-fire";
 
 export function readAutoWarmupAllEnabled(): boolean {
   if (typeof window === "undefined") return false;

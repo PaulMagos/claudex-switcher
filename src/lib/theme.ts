@@ -1,5 +1,5 @@
 export const THEME_CHANGED_EVENT = "theme-changed";
-export const THEME_STORAGE_KEY = "codex-switcher-theme";
+export const THEME_STORAGE_KEY = "claudex-switcher-theme";
 
 export type ThemeMode = "light" | "dark";
 

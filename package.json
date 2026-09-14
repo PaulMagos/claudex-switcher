@@ -1,8 +1,8 @@
 {
-  "name": "codex-switcher",
+  "name": "claudex-switcher",
   "private": true,
   "version": "0.2.18",
-  "description": "A multi-account manager for Codex CLI",
+  "description": "A multi-account manager for Codex CLI and Claude Code",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "tauri": "sh ./scripts/tauri.sh",
     "tauri:win": "tauri",
-    "lan": "pnpm build && cargo run --manifest-path src-tauri/Cargo.toml --bin codex-web",
+    "lan": "pnpm build && cargo run --manifest-path src-tauri/Cargo.toml --bin claudex-web",
     "version:bump": "node scripts/bump-version.mjs",
     "version:patch": "node scripts/bump-version.mjs patch",
     "version:minor": "node scripts/bump-version.mjs minor",

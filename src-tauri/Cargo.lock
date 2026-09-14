@@ -525,7 +525,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-switcher"
+name = "claudex-switcher"
 version = "0.2.18"
 dependencies = [
  "anyhow",

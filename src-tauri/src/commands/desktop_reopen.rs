@@ -172,7 +172,7 @@ fn windows_app_id(executable: &str) -> Option<String> {
     // Passing the path via the environment avoids interpreting it as PowerShell.
     let script = r#"
 $ErrorActionPreference = 'Stop'
-$exe = $env:CODEX_SWITCHER_REOPEN_EXE
+$exe = $env:CLAUDEX_SWITCHER_REOPEN_EXE
 foreach ($pkg in (Get-AppxPackage -Name 'OpenAI.Codex*')) {
   if (-not $pkg.InstallLocation) { continue }
   foreach ($app in (Get-AppxPackageManifest -Package $pkg.PackageFullName).Package.Applications.Application) {
@@ -189,7 +189,7 @@ exit 1
     let output = super::Command::new("powershell.exe")
         .creation_flags(super::CREATE_NO_WINDOW)
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .env("CODEX_SWITCHER_REOPEN_EXE", executable)
+        .env("CLAUDEX_SWITCHER_REOPEN_EXE", executable)
         .output()
         .ok()?;
     let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -317,8 +317,8 @@ fn launch_desktop(target: &DesktopTarget) -> bool {
                 super::Command::new("powershell.exe")
                     .creation_flags(super::CREATE_NO_WINDOW)
                     .args(["-NoProfile", "-NonInteractive", "-Command",
-                        "$ErrorActionPreference = 'Stop'; Start-Process ('shell:AppsFolder\\' + $env:CODEX_SWITCHER_REOPEN_APP_ID)"])
-                    .env("CODEX_SWITCHER_REOPEN_APP_ID", id),
+                        "$ErrorActionPreference = 'Stop'; Start-Process ('shell:AppsFolder\\' + $env:CLAUDEX_SWITCHER_REOPEN_APP_ID)"])
+                    .env("CLAUDEX_SWITCHER_REOPEN_APP_ID", id),
             )
         }
         #[allow(unreachable_patterns)]

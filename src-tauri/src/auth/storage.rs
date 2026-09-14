@@ -65,10 +65,17 @@ pub fn sync_active_account_tokens(store: &mut AccountsStore, auth: &AuthDotJson)
     true
 }
 
-/// Get the path to the codex-switcher config directory
+/// Get the path to the claudex-switcher config directory. Migrates the old
+/// `.codex-switcher` directory in place on first run after the app was
+/// renamed from Codex Switcher, so existing accounts are not lost.
 pub fn get_config_dir() -> Result<PathBuf> {
     let home = dirs::home_dir().context("Could not find home directory")?;
-    Ok(home.join(".codex-switcher"))
+    let config_dir = home.join(".claudex-switcher");
+    let legacy_dir = home.join(".codex-switcher");
+    if !config_dir.exists() && legacy_dir.exists() {
+        let _ = std::fs::rename(&legacy_dir, &config_dir);
+    }
+    Ok(config_dir)
 }
 
 /// Get the path to accounts.json

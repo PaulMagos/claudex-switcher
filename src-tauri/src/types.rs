@@ -1,4 +1,4 @@
-//! Core types for Codex Switcher
+//! Core types for Claudex Switcher
 
 use base64::Engine;
 use chrono::{DateTime, Utc};
