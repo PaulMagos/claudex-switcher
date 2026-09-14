@@ -1,6 +1,6 @@
 [package]
 name = "claudex-switcher"
-version = "0.2.18"
+version = "0.2.19"
 description = "A multi-account manager for Codex CLI and Claude Code"
 authors = ["lampese", "PaulMagos"]
 edition = "2021"
